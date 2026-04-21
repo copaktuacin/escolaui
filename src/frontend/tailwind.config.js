@@ -73,6 +73,12 @@ export default {
         },
         success: "oklch(var(--success))",
         warning: "oklch(var(--warning))",
+        // ── Per-school dynamic brand tokens (set at runtime by applyTheme) ──────
+        "school-primary": "var(--color-primary)",
+        "school-primary-hover": "var(--color-primary-hover)",
+        "school-primary-light": "var(--color-primary-light)",
+        "school-primary-foreground": "var(--color-primary-foreground)",
+        "school-accent": "var(--school-accent)",
       },
       borderRadius: {
         lg: "var(--radius)",

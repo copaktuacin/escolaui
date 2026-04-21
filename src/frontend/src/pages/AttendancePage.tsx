@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -21,20 +22,21 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
+  Loader2,
   QrCode,
   Save,
   Users,
   XCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  type AttendanceRecord,
-  mockAttendanceRecords,
-  mockClasses,
-  mockStudents,
-} from "../lib/mockData";
+  useAttendanceRecords,
+  useSaveAttendance,
+  useStudentsForClass,
+} from "../hooks/useQueries";
+import { mockClasses } from "../lib/mockData";
 
 type AttendanceStatus = "present" | "absent" | "late";
 
@@ -113,22 +115,45 @@ export default function AttendancePage() {
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = useState(today);
   const [selectedClass, setSelectedClass] = useState("10A");
-  const [attendance, setAttendance] = useState<
+  const [localAttendance, setLocalAttendance] = useState<
     Record<string, AttendanceStatus>
-  >(() =>
-    Object.fromEntries(
-      mockAttendanceRecords.map((r) => [r.studentId, r.status]),
-    ),
-  );
+  >({});
   const [qrInput, setQrInput] = useState("");
   const [scanHistory, setScanHistory] = useState<
     { id: string; name: string; time: string }[]
   >([]);
 
-  const classStudents = mockStudents.filter((s) => s.class === selectedClass);
+  const studentsQuery = useStudentsForClass(selectedClass);
+  const attendanceQuery = useAttendanceRecords(date, selectedClass);
+  const saveMutation = useSaveAttendance();
+
+  useEffect(() => {
+    if (studentsQuery.error)
+      toast.error("Failed to load students", {
+        description: (studentsQuery.error as Error).message,
+      });
+    if (attendanceQuery.error)
+      toast.error("Failed to load attendance records", {
+        description: (attendanceQuery.error as Error).message,
+      });
+  }, [studentsQuery.error, attendanceQuery.error]);
+
+  // Seed local attendance from loaded records
+  useEffect(() => {
+    if (attendanceQuery.data) {
+      const map: Record<string, AttendanceStatus> = {};
+      for (const r of attendanceQuery.data) {
+        map[r.studentId] = r.status;
+      }
+      setLocalAttendance(map);
+    }
+  }, [attendanceQuery.data]);
+
+  const classStudents = studentsQuery.data ?? [];
+
   const counts = classStudents.reduce(
     (acc, s) => {
-      const status = attendance[s.id] ?? "present";
+      const status = localAttendance[s.id] ?? "present";
       acc[status] = (acc[status] ?? 0) + 1;
       return acc;
     },
@@ -136,26 +161,45 @@ export default function AttendancePage() {
   );
 
   function setStatus(studentId: string, status: AttendanceStatus) {
-    setAttendance((prev) => ({ ...prev, [studentId]: status }));
+    setLocalAttendance((prev) => ({ ...prev, [studentId]: status }));
   }
 
-  function handleSubmit() {
-    toast.success(`Attendance for Class ${selectedClass} saved successfully!`, {
-      description: `${counts.present} present \u00b7 ${counts.absent} absent \u00b7 ${counts.late} late`,
-    });
+  async function handleSubmit() {
+    const records = classStudents.map((s) => ({
+      studentId: s.id,
+      status: localAttendance[s.id] ?? "present",
+    }));
+    try {
+      await saveMutation.mutateAsync({
+        date,
+        class: selectedClass,
+        section: "",
+        records,
+      });
+      toast.success(
+        `Attendance for Class ${selectedClass} saved successfully!`,
+        {
+          description: `${counts.present} present · ${counts.absent} absent · ${counts.late} late`,
+        },
+      );
+    } catch (err) {
+      toast.error("Failed to save attendance", {
+        description: (err as Error).message,
+      });
+    }
   }
 
   function handleQrScan() {
     const trimmed = qrInput.trim();
     if (!trimmed) return;
-    const student = mockStudents.find(
-      (s) => s.id === trimmed || s.rollNo.toString() === trimmed,
+    const student = classStudents.find(
+      (s) => s.id === trimmed || String(s.rollNo) === trimmed,
     );
     if (!student) {
       toast.error(`Student ID "${trimmed}" not found`);
       return;
     }
-    setAttendance((prev) => ({ ...prev, [student.id]: "present" }));
+    setStatus(student.id, "present");
     setScanHistory((prev) => [
       {
         id: student.id,
@@ -261,7 +305,11 @@ export default function AttendancePage() {
                 <card.icon className={`w-4 h-4 ${card.color}`} />
               </div>
             </div>
-            <p className="text-3xl font-bold text-foreground">{card.value}</p>
+            {studentsQuery.isPending ? (
+              <Skeleton className="h-8 w-12" />
+            ) : (
+              <p className="text-3xl font-bold text-foreground">{card.value}</p>
+            )}
           </motion.div>
         ))}
       </div>
@@ -296,7 +344,21 @@ export default function AttendancePage() {
               </Badge>
             </div>
 
-            {classStudents.length === 0 ? (
+            {studentsQuery.isPending ? (
+              <div className="space-y-3" data-ocid="attendance.loading_state">
+                {["a", "b", "c", "d", "e", "f"].map((k) => (
+                  <div key={k} className="flex items-center gap-4">
+                    <Skeleton className="h-4 w-10" />
+                    <Skeleton className="h-4 flex-1" />
+                    <div className="flex gap-2">
+                      <Skeleton className="h-7 w-16 rounded-full" />
+                      <Skeleton className="h-7 w-16 rounded-full" />
+                      <Skeleton className="h-7 w-14 rounded-full" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : classStudents.length === 0 ? (
               <div
                 className="text-center py-16 text-muted-foreground"
                 data-ocid="attendance.empty_state"
@@ -315,7 +377,7 @@ export default function AttendancePage() {
                 </TableHeader>
                 <TableBody>
                   {classStudents.map((student, i) => {
-                    const status = attendance[student.id] ?? "present";
+                    const status = localAttendance[student.id] ?? "present";
                     return (
                       <TableRow
                         key={student.id}
@@ -362,10 +424,19 @@ export default function AttendancePage() {
             <div className="mt-5 flex justify-end">
               <Button
                 onClick={handleSubmit}
+                disabled={saveMutation.isPending || classStudents.length === 0}
                 className="gap-2"
                 data-ocid="attendance.submit_button"
               >
-                <Save className="w-4 h-4" /> Submit Attendance
+                {saveMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" /> Submit Attendance
+                  </>
+                )}
               </Button>
             </div>
           </motion.div>
@@ -403,7 +474,7 @@ export default function AttendancePage() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Tip: Try student IDs like "s1", "s2", etc.
+                Tip: Try student IDs like "STU-001", "STU-002", etc.
               </p>
             </div>
 

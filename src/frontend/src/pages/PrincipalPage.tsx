@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -18,6 +19,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/lib/api";
+import { isDemoMode } from "@/lib/demoMode";
+import { withDelay } from "@/lib/mockData";
+import { roleLabels } from "@/lib/rolePermissions";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Crown,
@@ -30,17 +36,17 @@ import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
-import { roleLabels } from "../lib/rolePermissions";
 
 type TeacherRecord = {
   id: string;
   name: string;
   email: string;
-  phone: string;
-  subject: string;
-  classAssigned: string;
+  phone?: string;
+  subject?: string;
+  subjects?: string[];
+  classAssigned?: string;
   status: "active" | "inactive";
-  accessStatus: "granted" | "revoked";
+  accessStatus?: "granted" | "revoked";
   terminationReason?: "resigned" | "relieved";
 };
 
@@ -54,7 +60,7 @@ type StaffRecord = {
 
 const PRINCIPAL_STAFF_ROLES = ["account_officer", "admission_officer", "clerk"];
 
-const initialTeachers: TeacherRecord[] = [
+const MOCK_TEACHERS: TeacherRecord[] = [
   {
     id: "t1",
     name: "Mrs. Grace Okafor",
@@ -88,20 +94,36 @@ const initialTeachers: TeacherRecord[] = [
   },
 ];
 
-const initialStaff: StaffRecord[] = [
-  {
-    id: "s1",
-    name: "Ms. Ngozi Eze",
-    email: "ngozi.eze@escola.com",
-    role: "clerk",
-    status: "active",
-  },
-];
+function useTeachers() {
+  return useQuery<TeacherRecord[]>({
+    queryKey: ["principal-teachers"],
+    queryFn: async () => {
+      if (isDemoMode()) return withDelay(MOCK_TEACHERS);
+      const res = await api.get<{ data: TeacherRecord[] }>(
+        "/teachers?limit=50",
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to load teachers");
+      const d = res.data;
+      if (!d) return [];
+      if ("data" in d) return d.data;
+      return d as unknown as TeacherRecord[];
+    },
+  });
+}
 
 export default function PrincipalPage() {
   const { user } = useAuth();
-  const [teachers, setTeachers] = useState<TeacherRecord[]>(initialTeachers);
-  const [staff, setStaff] = useState<StaffRecord[]>(initialStaff);
+  const qc = useQueryClient();
+  const { data: teachers = [], isLoading } = useTeachers();
+  const [staff, setStaff] = useState<StaffRecord[]>([
+    {
+      id: "s1",
+      name: "Ms. Ngozi Eze",
+      email: "ngozi.eze@escola.com",
+      role: "clerk",
+      status: "active",
+    },
+  ]);
 
   const [newTeacher, setNewTeacher] = useState({
     name: "",
@@ -110,12 +132,121 @@ export default function PrincipalPage() {
     subject: "",
     classAssigned: "",
   });
-
   const [newStaff, setNewStaff] = useState({
     name: "",
     email: "",
     role: "clerk",
   });
+
+  const appointMutation = useMutation({
+    mutationFn: async (payload: typeof newTeacher) => {
+      if (
+        !payload.name.trim() ||
+        !payload.email.trim() ||
+        !payload.subject.trim()
+      )
+        throw new Error("Please fill in Name, Email, and Subject");
+      if (isDemoMode()) {
+        await withDelay(null, 500);
+        return {
+          id: `t${Date.now()}`,
+          ...payload,
+          status: "active" as const,
+          accessStatus: "granted" as const,
+        };
+      }
+      // Create user with teacher role via admin API
+      const res = await api.post<TeacherRecord>("/teachers", {
+        name: payload.name,
+        email: payload.email,
+        phone: payload.phone,
+        subjects: [payload.subject],
+        classAssigned: payload.classAssigned,
+      });
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to appoint teacher");
+      return res.data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["principal-teachers"] });
+      toast.success(
+        `Teacher ${data?.name ?? newTeacher.name} appointed — system access granted automatically`,
+      );
+      setNewTeacher({
+        name: "",
+        email: "",
+        phone: "",
+        subject: "",
+        classAssigned: "",
+      });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const terminateMutation = useMutation({
+    mutationFn: async ({
+      id,
+      reason,
+    }: { id: string; reason: "resigned" | "relieved" }) => {
+      if (isDemoMode()) {
+        await withDelay(null, 400);
+        return { id, reason };
+      }
+      // Revoke teacher role via admin users API
+      const res = await api.put(`/admin/users/${id}`, {
+        active: false,
+        role: "inactive",
+      });
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to terminate teacher");
+      return { id, reason };
+    },
+    onSuccess: ({ reason }) => {
+      qc.invalidateQueries({ queryKey: ["principal-teachers"] });
+      toast.success(
+        `Teacher ${reason === "resigned" ? "marked as resigned" : "relieved"} — system access revoked automatically`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const addStaffMutation = useMutation({
+    mutationFn: async (payload: typeof newStaff) => {
+      if (!payload.name.trim() || !payload.email.trim())
+        throw new Error("Fill in all fields");
+      if (isDemoMode()) {
+        await withDelay(null, 300);
+        return { id: `s${Date.now()}`, ...payload, status: "active" as const };
+      }
+      const res = await api.post<StaffRecord>("/admin/users", {
+        name: payload.name,
+        email: payload.email,
+        role: payload.role,
+        password: "Escola@2026",
+      });
+      if (!res.success) throw new Error(res.error ?? "Failed to add staff");
+      return res.data;
+    },
+    onSuccess: (data) => {
+      const name = data?.name ?? newStaff.name;
+      const role = data?.role ?? newStaff.role;
+      setStaff((prev) => [
+        ...prev,
+        {
+          id: data?.id ?? `s${Date.now()}`,
+          name,
+          email: newStaff.email,
+          role,
+          status: "active",
+        },
+      ]);
+      toast.success(`${name} added as ${roleLabels[role] ?? role}`);
+      setNewStaff({ name: "", email: "", role: "clerk" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const activeTeachers = teachers.filter((t) => t.status === "active");
 
   if (user?.role !== "principal") {
     return (
@@ -130,79 +261,6 @@ export default function PrincipalPage() {
       </div>
     );
   }
-
-  function handleAppointTeacher() {
-    const { name, email, phone, subject, classAssigned } = newTeacher;
-    if (!name.trim() || !email.trim() || !subject.trim()) {
-      toast.error("Please fill in Name, Email, and Subject");
-      return;
-    }
-    const teacher: TeacherRecord = {
-      id: `t${teachers.length + 1}`,
-      name,
-      email,
-      phone,
-      subject,
-      classAssigned,
-      status: "active",
-      accessStatus: "granted",
-    };
-    setTeachers((prev) => [teacher, ...prev]);
-    toast.success(
-      `Teacher ${name} appointed — system access granted automatically`,
-    );
-    setNewTeacher({
-      name: "",
-      email: "",
-      phone: "",
-      subject: "",
-      classAssigned: "",
-    });
-  }
-
-  function handleTerminate(id: string, reason: "resigned" | "relieved") {
-    let teacherName = "";
-    setTeachers((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          teacherName = t.name;
-          return {
-            ...t,
-            status: "inactive",
-            accessStatus: "revoked",
-            terminationReason: reason,
-          };
-        }
-        return t;
-      }),
-    );
-    toast.success(
-      `${teacherName} has been ${reason === "resigned" ? "marked as resigned" : "relieved"} — system access revoked automatically`,
-    );
-  }
-
-  function handleAddStaff() {
-    if (!newStaff.name.trim() || !newStaff.email.trim()) {
-      toast.error("Fill in all fields");
-      return;
-    }
-    setStaff((prev) => [
-      ...prev,
-      {
-        id: `s${prev.length + 1}`,
-        name: newStaff.name,
-        email: newStaff.email,
-        role: newStaff.role,
-        status: "active",
-      },
-    ]);
-    toast.success(
-      `${newStaff.name} added as ${roleLabels[newStaff.role] ?? newStaff.role}`,
-    );
-    setNewStaff({ name: "", email: "", role: "clerk" });
-  }
-
-  const activeTeachers = teachers.filter((t) => t.status === "active");
 
   return (
     <motion.div
@@ -236,7 +294,7 @@ export default function PrincipalPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Tab 1: Appoint Teacher */}
+        {/* Tab 1: Appoint */}
         <TabsContent value="appoint" className="mt-6 space-y-6">
           <div className="bg-card rounded-xl border border-border shadow-card p-6">
             <div className="flex items-center gap-2 mb-5">
@@ -306,16 +364,19 @@ export default function PrincipalPage() {
             </div>
             <div className="mt-5">
               <Button
-                onClick={handleAppointTeacher}
+                onClick={() => appointMutation.mutate(newTeacher)}
+                disabled={appointMutation.isPending}
                 className="gap-2"
                 data-ocid="principal.appoint.primary_button"
               >
-                <PlusCircle className="w-4 h-4" /> Appoint Teacher
+                <PlusCircle className="w-4 h-4" />
+                {appointMutation.isPending
+                  ? "Appointing..."
+                  : "Appoint Teacher"}
               </Button>
             </div>
           </div>
 
-          {/* Teacher list */}
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
             <div className="p-4 border-b border-border">
               <h3 className="font-semibold text-sm">Appointed Teachers</h3>
@@ -336,7 +397,15 @@ export default function PrincipalPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {teachers.length === 0 ? (
+                  {isLoading ? (
+                    (["a", "b", "c"] as const).map((k) => (
+                      <TableRow key={`sk-${k}`}>
+                        <TableCell colSpan={5}>
+                          <Skeleton className="h-8" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : teachers.length === 0 ? (
                     <TableRow data-ocid="principal.teachers.empty_state">
                       <TableCell
                         colSpan={5}
@@ -360,19 +429,15 @@ export default function PrincipalPage() {
                           </div>
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-sm">
-                          {t.subject}
+                          {t.subject ?? (t.subjects ?? []).join(", ")}
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-sm">
-                          {t.classAssigned || "–"}
+                          {t.classAssigned ?? "–"}
                         </TableCell>
                         <TableCell>
                           <Badge
                             variant="outline"
-                            className={`text-xs ${
-                              t.status === "active"
-                                ? "bg-success/10 text-success border-success/30"
-                                : "bg-muted text-muted-foreground"
-                            }`}
+                            className={`text-xs ${t.status === "active" ? "bg-success/10 text-success border-success/30" : "bg-muted text-muted-foreground"}`}
                           >
                             {t.status}
                           </Badge>
@@ -380,13 +445,9 @@ export default function PrincipalPage() {
                         <TableCell>
                           <Badge
                             variant="outline"
-                            className={`text-xs ${
-                              t.accessStatus === "granted"
-                                ? "bg-primary/10 text-primary border-primary/30"
-                                : "bg-destructive/10 text-destructive border-destructive/30"
-                            }`}
+                            className={`text-xs ${(t.accessStatus ?? "granted") === "granted" ? "bg-primary/10 text-primary border-primary/30" : "bg-destructive/10 text-destructive border-destructive/30"}`}
                           >
-                            {t.accessStatus === "granted"
+                            {(t.accessStatus ?? "granted") === "granted"
                               ? "Access Granted"
                               : "Access Revoked"}
                           </Badge>
@@ -400,7 +461,7 @@ export default function PrincipalPage() {
           </div>
         </TabsContent>
 
-        {/* Tab 2: Relieve / Resignation */}
+        {/* Tab 2: Relieve */}
         <TabsContent value="relieve" className="mt-6">
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
             <div className="p-4 border-b border-border flex items-center gap-2">
@@ -410,7 +471,13 @@ export default function PrincipalPage() {
                 Click an action to revoke access immediately
               </span>
             </div>
-            {activeTeachers.length === 0 ? (
+            {isLoading ? (
+              <div className="p-5 space-y-3">
+                {(["a", "b"] as const).map((k) => (
+                  <Skeleton key={k} className="h-12" />
+                ))}
+              </div>
+            ) : activeTeachers.length === 0 ? (
               <div
                 className="p-10 text-center text-muted-foreground text-sm"
                 data-ocid="principal.relieve.empty_state"
@@ -447,10 +514,10 @@ export default function PrincipalPage() {
                           </div>
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-sm">
-                          {t.subject}
+                          {t.subject ?? "–"}
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-sm">
-                          {t.classAssigned || "–"}
+                          {t.classAssigned ?? "–"}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -458,21 +525,32 @@ export default function PrincipalPage() {
                               size="sm"
                               variant="outline"
                               className="text-xs h-7 gap-1"
-                              onClick={() => handleTerminate(t.id, "resigned")}
+                              onClick={() =>
+                                terminateMutation.mutate({
+                                  id: t.id,
+                                  reason: "resigned",
+                                })
+                              }
+                              disabled={terminateMutation.isPending}
                               data-ocid={`principal.resign.${i + 1}.button`}
                             >
-                              <AlertTriangle className="w-3 h-3" />
-                              Mark Resigned
+                              <AlertTriangle className="w-3 h-3" /> Mark
+                              Resigned
                             </Button>
                             <Button
                               size="sm"
                               variant="destructive"
                               className="text-xs h-7 gap-1"
-                              onClick={() => handleTerminate(t.id, "relieved")}
+                              onClick={() =>
+                                terminateMutation.mutate({
+                                  id: t.id,
+                                  reason: "relieved",
+                                })
+                              }
+                              disabled={terminateMutation.isPending}
                               data-ocid={`principal.relieve.${i + 1}.delete_button`}
                             >
-                              <UserMinus className="w-3 h-3" />
-                              Relieve
+                              <UserMinus className="w-3 h-3" /> Relieve
                             </Button>
                           </div>
                         </TableCell>
@@ -484,7 +562,6 @@ export default function PrincipalPage() {
             )}
           </div>
 
-          {/* Terminated teachers */}
           {teachers.some((t) => t.status === "inactive") && (
             <div className="mt-4 bg-card rounded-xl border border-border shadow-card overflow-hidden">
               <div className="p-4 border-b border-border">
@@ -542,9 +619,8 @@ export default function PrincipalPage() {
           )}
         </TabsContent>
 
-        {/* Tab 3: Manage Staff */}
+        {/* Tab 3: Staff */}
         <TabsContent value="staff" className="mt-6 space-y-6">
-          {/* Warning notice */}
           <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
             <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
             <p className="text-foreground/80">
@@ -603,16 +679,17 @@ export default function PrincipalPage() {
             </div>
             <div className="mt-5">
               <Button
-                onClick={handleAddStaff}
+                onClick={() => addStaffMutation.mutate(newStaff)}
+                disabled={addStaffMutation.isPending}
                 className="gap-2"
                 data-ocid="principal.add_staff.primary_button"
               >
-                <PlusCircle className="w-4 h-4" /> Add Staff Member
+                <PlusCircle className="w-4 h-4" />
+                {addStaffMutation.isPending ? "Adding..." : "Add Staff Member"}
               </Button>
             </div>
           </div>
 
-          {/* Staff list */}
           {staff.length > 0 && (
             <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
               <div className="p-4 border-b border-border">

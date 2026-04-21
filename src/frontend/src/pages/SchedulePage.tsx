@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BookOpen,
   Calculator,
@@ -29,8 +30,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useSchedule } from "../hooks/useQueries";
+import { isDemoMode } from "../lib/demoMode";
 import {
   type TimetableEntry,
   mockClasses,
@@ -266,9 +269,40 @@ function SubjectCell({
 
 export default function SchedulePage() {
   const [selectedClass, setSelectedClass] = useState("10A");
-  const [timetable, setTimetable] = useState<TimetableEntry[]>(mockTimetable);
+  const [localTimetable, setLocalTimetable] = useState<TimetableEntry[]>([]);
   const [editMode, setEditMode] = useState(false);
   const [autoSolving, setAutoSolving] = useState(false);
+
+  const {
+    data: fetchedTimetable,
+    isLoading: scheduleLoading,
+    isError,
+  } = useSchedule(isDemoMode() ? "" : selectedClass);
+
+  // Sync fetched data into local state so edits can be applied on top
+  useEffect(() => {
+    if (fetchedTimetable) {
+      setLocalTimetable(fetchedTimetable);
+    }
+  }, [fetchedTimetable]);
+
+  // In demo mode, seed with mock data immediately
+  useEffect(() => {
+    if (isDemoMode()) {
+      setLocalTimetable(mockTimetable);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isError) {
+      toast.error("Failed to load timetable", {
+        description: "Could not fetch schedule from the server.",
+      });
+    }
+  }, [isError]);
+
+  // Use localTimetable for rendering (contains live or mock data + local edits)
+  const timetable = localTimetable;
 
   const timetableMap: Record<string, TimetableEntry> = {};
   for (const entry of timetable) {
@@ -301,7 +335,7 @@ export default function SchedulePage() {
   }
 
   function handleEditCell(data: EditCell) {
-    setTimetable((prev) =>
+    setLocalTimetable((prev) =>
       prev.map((e) =>
         e.day === data.day && e.period === data.period
           ? {
@@ -314,6 +348,15 @@ export default function SchedulePage() {
       ),
     );
     toast.success("Period updated");
+  }
+
+  if (scheduleLoading && !isDemoMode()) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-[400px] w-full rounded-xl" />
+      </div>
+    );
   }
 
   return (

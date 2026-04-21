@@ -1,7 +1,7 @@
 // API client for EscolaUI - connects to external school management API
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "https://api.escolaui.example.com/v1";
+import { getApiBaseUrl } from "./demoMode";
+import { getTenantId } from "./tenant";
 
 export type ApiResponse<T> = {
   success: boolean;
@@ -42,21 +42,35 @@ function getRefreshToken() {
   return localStorage.getItem("refreshToken");
 }
 
+/** Auth endpoints must NOT include X-Tenant-ID per API spec */
+function isAuthPath(path: string): boolean {
+  return path.startsWith("/auth/");
+}
+
 async function refreshTokenRequest(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
+  const baseUrl = getApiBaseUrl();
   try {
-    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    const res = await fetch(`${baseUrl}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // No X-Tenant-ID on auth endpoints
+      },
       body: JSON.stringify({ refreshToken }),
     });
     if (!res.ok) return null;
     const json = await res.json();
-    const newToken = json.data?.accessToken;
-    if (newToken) {
-      localStorage.setItem("accessToken", newToken);
-      return newToken;
+    // Response shape: { accessToken, refreshToken }
+    const newAccessToken: string | undefined = json.accessToken;
+    const newRefreshToken: string | undefined = json.refreshToken;
+    if (newAccessToken) {
+      localStorage.setItem("accessToken", newAccessToken);
+      if (newRefreshToken) {
+        localStorage.setItem("refreshToken", newRefreshToken);
+      }
+      return newAccessToken;
     }
     return null;
   } catch {
@@ -70,13 +84,20 @@ async function request<T>(
   body?: unknown,
   retry = true,
 ): Promise<ApiResponse<T>> {
+  const baseUrl = getApiBaseUrl();
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
+
+  // Only non-auth endpoints carry X-Tenant-ID
+  if (!isAuthPath(path)) {
+    headers["X-Tenant-ID"] = getTenantId();
+  }
+
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -95,8 +116,8 @@ async function request<T>(
     return { success: false, data: null, error: ERROR_CODES[429] };
   }
 
-  // Handle 401 with token refresh
-  if (res.status === 401 && retry) {
+  // Handle 401 with token refresh (skip for auth paths to avoid infinite loop)
+  if (res.status === 401 && retry && !isAuthPath(path)) {
     const newToken = await refreshTokenRequest();
     if (newToken) {
       return request<T>(method, path, body, false);
@@ -118,6 +139,7 @@ async function request<T>(
 
   try {
     const json = await res.json();
+    // Auth endpoints return the DTO directly (no envelope); non-auth may wrap in { data }
     return {
       success: true,
       data: json.data ?? json,

@@ -55,6 +55,16 @@
     --success: 0.72 0.19 145;
     --warning: 0.78 0.17 65;
     --info: 0.58 0.12 240;
+
+    /* ── Per-school dynamic theme tokens ───────────────────────────────────────
+       These are set at runtime by applyTheme() in src/lib/theme.ts.
+       The fallback values here ensure a valid render before JS executes.
+    ─────────────────────────────────────────────────────────────────────────── */
+    --color-primary: #0b5aae;
+    --color-primary-hover: #0a4fa0;
+    --color-primary-light: rgba(11, 90, 174, 0.15);
+    --color-primary-foreground: #ffffff;
+    --school-accent: #0b5aae;
   }
 
   * {
@@ -63,5 +73,28 @@
   body {
     @apply bg-background text-foreground;
     font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  }
+
+  /* ── School-brand focus rings ───────────────────────────────────────────── */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Active sidebar link: uses the per-school primary color */
+  .nav-link-active {
+    background-color: var(--color-primary-light);
+    color: var(--color-primary-foreground);
+  }
+
+  /* School-brand button utility (supplements shadcn primary variant) */
+  .btn-school-primary {
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+  .btn-school-primary:hover {
+    background-color: var(--color-primary-hover);
   }
 }

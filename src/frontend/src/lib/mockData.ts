@@ -64,6 +64,114 @@ export type TimetableEntry = {
   room: string;
 };
 
+// ─── Demo School Profiles ───────────────────────────────────────────────────
+
+export type DemoSchoolProfile = {
+  id: string;
+  name: string;
+  schoolName: string;
+  tagline: string;
+  logo: string | null;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  motto: string;
+  established: number;
+  academicYear: string;
+  termStart: string;
+  termEnd: string;
+  primaryColor?: string;
+};
+
+export const DEMO_SCHOOL_PROFILES: Record<string, DemoSchoolProfile> = {
+  "demo-escola": {
+    id: "demo-escola",
+    name: "demo-escola",
+    schoolName: "Escola Model School",
+    tagline: "Excellence in Education",
+    logo: null,
+    address: "14 Victoria Island, Lagos, Nigeria",
+    phone: "+234 801 234 5678",
+    email: "info@escolamodel.edu.ng",
+    website: "escolamodel.edu.ng",
+    motto: "Knowledge, Character, Service",
+    established: 1998,
+    academicYear: "2025–2026",
+    termStart: "2026-01-10",
+    termEnd: "2026-04-05",
+    primaryColor: "#0B5AAE",
+  },
+  "demo-city-academy": {
+    id: "demo-city-academy",
+    name: "demo-city-academy",
+    schoolName: "City Academy",
+    tagline: "Shaping Future Leaders",
+    logo: null,
+    address: "22 Broad Street, Abuja, FCT, Nigeria",
+    phone: "+234 802 345 6789",
+    email: "admin@cityacademy.edu",
+    website: "cityacademy.edu",
+    motto: "Courage, Integrity, Excellence",
+    established: 2005,
+    academicYear: "2025–2026",
+    termStart: "2026-01-15",
+    termEnd: "2026-04-12",
+    primaryColor: "#1A7A4A",
+  },
+  "demo-sunrise": {
+    id: "demo-sunrise",
+    name: "demo-sunrise",
+    schoolName: "Sunrise International School",
+    tagline: "A New Dawn in Learning",
+    logo: null,
+    address: "8 Airport Road, Enugu, Nigeria",
+    phone: "+234 803 456 7890",
+    email: "contact@sunriseintl.edu",
+    website: "sunriseintl.edu",
+    motto: "Rise, Learn, Achieve",
+    established: 2010,
+    academicYear: "2025–2026",
+    termStart: "2026-01-12",
+    termEnd: "2026-04-08",
+    primaryColor: "#C45C1A",
+  },
+  "demo-greenfield": {
+    id: "demo-greenfield",
+    name: "demo-greenfield",
+    schoolName: "Greenfield High School",
+    tagline: "Growing Minds, Growing Futures",
+    logo: null,
+    address: "5 GRA Road, Port Harcourt, Rivers State, Nigeria",
+    phone: "+234 804 567 8901",
+    email: "hello@greenfieldhs.edu",
+    website: "greenfieldhs.edu",
+    motto: "Grow. Serve. Inspire.",
+    established: 2003,
+    academicYear: "2025–2026",
+    termStart: "2026-01-08",
+    termEnd: "2026-04-02",
+    primaryColor: "#6B21A8",
+  },
+  "demo-riverside": {
+    id: "demo-riverside",
+    name: "demo-riverside",
+    schoolName: "Riverside Academy",
+    tagline: "Where Curiosity Meets Excellence",
+    logo: null,
+    address: "3 Ring Road, Ibadan, Oyo State, Nigeria",
+    phone: "+234 805 678 9012",
+    email: "info@riversideacademy.edu",
+    website: "riversideacademy.edu",
+    motto: "Flow. Focus. Flourish.",
+    established: 2007,
+    academicYear: "2025–2026",
+    termStart: "2026-01-13",
+    termEnd: "2026-04-10",
+    primaryColor: "#06B6D4",
+  },
+};
+
 export const mockApplications: Application[] = [
   {
     id: "APP-001",
@@ -403,10 +511,7 @@ export const mockStudents: Student[] = [
 ];
 
 export const mockAttendanceRecords: AttendanceRecord[] = mockStudents.map(
-  (s) => ({
-    studentId: s.id,
-    status: "present",
-  }),
+  (s) => ({ studentId: s.id, status: "present" }),
 );
 
 export const mockInvoices: Invoice[] = [
@@ -744,6 +849,279 @@ export const mockTimetable: TimetableEntry[] = [
     room: "Lab-3",
   },
 ];
+
+// ─── Subscription & Tenant Types ────────────────────────────────────────────
+
+export type SubscriptionStatus = "Active" | "Overdue" | "DueSoon" | "Paused";
+
+export type Tenant = {
+  id: string;
+  schoolName: string;
+  adminEmail: string;
+  primaryColor: string;
+  logoUrl: string | null;
+  domain: string | null;
+  status: "active" | "inactive";
+  userCount: number;
+  createdAt: string;
+  // Subscription fields
+  plan: "Free" | "Basic" | "Pro" | "Enterprise";
+  billingCycle: "monthly" | "annual";
+  amountDue: number;
+  nextPaymentDate: string;
+  subscriptionStatus: SubscriptionStatus;
+};
+
+export type PaymentReminder = {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  recipientEmail: string;
+  message: string;
+  sentAt: string;
+  status: "sent" | "failed" | "pending";
+};
+
+export type PlatformNotification = {
+  id: string;
+  message: string;
+  sentAt: string;
+  read: boolean;
+  from: "platform";
+};
+
+// ─── Demo Tenants with Subscription Data ─────────────────────────────────────
+
+export const DEMO_TENANTS: Tenant[] = [
+  {
+    id: "demo-escola",
+    schoolName: "Escola Model School",
+    adminEmail: "admin@escolamodel.edu.ng",
+    primaryColor: "#3B82F6",
+    logoUrl: null,
+    domain: "escolamodel.escolaui.com",
+    status: "active",
+    userCount: 342,
+    createdAt: "2024-01-15T09:00:00Z",
+    plan: "Pro",
+    billingCycle: "monthly",
+    amountDue: 299,
+    nextPaymentDate: "2026-05-01",
+    subscriptionStatus: "Active",
+  },
+  {
+    id: "demo-city-academy",
+    schoolName: "City Academy",
+    adminEmail: "admin@cityacademy.edu",
+    primaryColor: "#8B5CF6",
+    logoUrl: null,
+    domain: "cityacademy.escolaui.com",
+    status: "active",
+    userCount: 215,
+    createdAt: "2024-03-02T10:30:00Z",
+    plan: "Basic",
+    billingCycle: "monthly",
+    amountDue: 99,
+    nextPaymentDate: "2026-04-25",
+    subscriptionStatus: "DueSoon",
+  },
+  {
+    id: "demo-sunrise",
+    schoolName: "Sunrise International School",
+    adminEmail: "contact@sunriseintl.edu",
+    primaryColor: "#F59E0B",
+    logoUrl: null,
+    domain: "sunrise.escolaui.com",
+    status: "inactive",
+    userCount: 89,
+    createdAt: "2024-05-20T08:15:00Z",
+    plan: "Basic",
+    billingCycle: "annual",
+    amountDue: 840,
+    nextPaymentDate: "2026-03-20",
+    subscriptionStatus: "Overdue",
+  },
+  {
+    id: "demo-greenfield",
+    schoolName: "Greenfield High School",
+    adminEmail: "hello@greenfieldhs.edu",
+    primaryColor: "#10B981",
+    logoUrl: null,
+    domain: "greenfield.escolaui.com",
+    status: "active",
+    userCount: 178,
+    createdAt: "2024-07-11T11:00:00Z",
+    plan: "Enterprise",
+    billingCycle: "annual",
+    amountDue: 3600,
+    nextPaymentDate: "2026-12-01",
+    subscriptionStatus: "Active",
+  },
+  {
+    id: "demo-riverside",
+    schoolName: "Riverside Academy",
+    adminEmail: "info@riversideacademy.edu",
+    primaryColor: "#06B6D4",
+    logoUrl: null,
+    domain: "riverside.escolaui.com",
+    status: "active",
+    userCount: 134,
+    createdAt: "2024-09-05T14:00:00Z",
+    plan: "Pro",
+    billingCycle: "monthly",
+    amountDue: 299,
+    nextPaymentDate: "2026-03-15",
+    subscriptionStatus: "Overdue",
+  },
+];
+
+// ─── Mutable Demo Tenants Store (session-only, in-memory mutations) ──────────
+// Mirrors DEMO_TENANTS but is mutable so create/update/toggle persist for the
+// duration of the browser session without actual API calls.
+
+export let demoTenantsStore: Tenant[] = [...DEMO_TENANTS];
+
+export function resetDemoTenantsStore() {
+  demoTenantsStore = [...DEMO_TENANTS];
+}
+
+export function addDemoTenant(tenant: Tenant) {
+  demoTenantsStore = [...demoTenantsStore, tenant];
+}
+
+export function updateDemoTenant(id: string, updates: Partial<Tenant>) {
+  demoTenantsStore = demoTenantsStore.map((t) =>
+    t.id === id ? { ...t, ...updates } : t,
+  );
+}
+
+export function toggleDemoTenantStatus(id: string, active: boolean) {
+  demoTenantsStore = demoTenantsStore.map((t) =>
+    t.id === id ? { ...t, status: active ? "active" : "inactive" } : t,
+  );
+}
+
+// ─── Demo Payment Reminder Log ───────────────────────────────────────────────
+
+export const DEMO_REMINDERS: PaymentReminder[] = [
+  {
+    id: "REM-001",
+    tenantId: "demo-sunrise",
+    tenantName: "Sunrise International School",
+    recipientEmail: "contact@sunriseintl.edu",
+    message:
+      "Your subscription payment of $840 is overdue. Please settle your balance to avoid service interruption.",
+    sentAt: "2026-04-10T09:15:00Z",
+    status: "sent",
+  },
+  {
+    id: "REM-002",
+    tenantId: "demo-riverside",
+    tenantName: "Riverside Academy",
+    recipientEmail: "info@riversideacademy.edu",
+    message:
+      "Your subscription payment of $299 is overdue since Mar 15. Please renew to maintain uninterrupted access.",
+    sentAt: "2026-04-10T09:16:00Z",
+    status: "sent",
+  },
+  {
+    id: "REM-003",
+    tenantId: "demo-city-academy",
+    tenantName: "City Academy",
+    recipientEmail: "admin@cityacademy.edu",
+    message:
+      "Your subscription renewal of $99 is due on Apr 25. Please process your payment before the due date.",
+    sentAt: "2026-04-08T14:30:00Z",
+    status: "sent",
+  },
+  {
+    id: "REM-004",
+    tenantId: "demo-sunrise",
+    tenantName: "Sunrise International School",
+    recipientEmail: "contact@sunriseintl.edu",
+    message:
+      "Reminder: Your account remains suspended due to non-payment. Please clear your balance of $840 to restore access.",
+    sentAt: "2026-04-05T10:00:00Z",
+    status: "sent",
+  },
+  {
+    id: "REM-005",
+    tenantId: "demo-riverside",
+    tenantName: "Riverside Academy",
+    recipientEmail: "info@riversideacademy.edu",
+    message:
+      "Final notice: Payment of $299 is overdue. Continued non-payment may result in account suspension.",
+    sentAt: "2026-04-01T11:45:00Z",
+    status: "sent",
+  },
+  {
+    id: "REM-006",
+    tenantId: "demo-city-academy",
+    tenantName: "City Academy",
+    recipientEmail: "admin@cityacademy.edu",
+    message:
+      "Your EscolaUI Pro plan renews on Apr 25 for $99. No action needed if your payment method is up to date.",
+    sentAt: "2026-03-25T08:00:00Z",
+    status: "sent",
+  },
+];
+
+// ─── Platform Notifications (for tenant admins) ──────────────────────────────
+
+// Map of tenantId → array of notifications shown to that tenant's admin
+export const platformAdminNotifications: Record<
+  string,
+  PlatformNotification[]
+> = {
+  "demo-sunrise": [
+    {
+      id: "PNOTIF-001",
+      message:
+        "Payment reminder sent: Your subscription of $840 is overdue. Please settle your balance.",
+      sentAt: "2026-04-10T09:15:00Z",
+      read: false,
+      from: "platform",
+    },
+    {
+      id: "PNOTIF-002",
+      message:
+        "Account notice: Your EscolaUI account has been suspended due to non-payment. Contact platform admin to restore.",
+      sentAt: "2026-04-05T10:00:00Z",
+      read: true,
+      from: "platform",
+    },
+  ],
+  "demo-riverside": [
+    {
+      id: "PNOTIF-003",
+      message:
+        "Payment reminder sent: Your subscription payment of $299 is overdue since Mar 15. Please renew to maintain access.",
+      sentAt: "2026-04-10T09:16:00Z",
+      read: false,
+      from: "platform",
+    },
+    {
+      id: "PNOTIF-004",
+      message:
+        "Final notice: Payment of $299 is overdue. Continued non-payment may result in account suspension.",
+      sentAt: "2026-04-01T11:45:00Z",
+      read: false,
+      from: "platform",
+    },
+  ],
+  "demo-city-academy": [
+    {
+      id: "PNOTIF-005",
+      message:
+        "Upcoming renewal: Your subscription of $99 is due on Apr 25. Please ensure your payment method is current.",
+      sentAt: "2026-04-08T14:30:00Z",
+      read: true,
+      from: "platform",
+    },
+  ],
+  "demo-escola": [],
+  "demo-greenfield": [],
+};
 
 // Simulate API delay
 export function withDelay<T>(data: T, ms = 500): Promise<T> {

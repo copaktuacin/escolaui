@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import {
   Table,
@@ -19,6 +20,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/lib/api";
+import { isDemoMode } from "@/lib/demoMode";
+import { withDelay } from "@/lib/mockData";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, FileText, Save } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
@@ -34,7 +39,17 @@ type StudentGrades = {
   grades: Record<string, number | "">;
 };
 
-const initialStudents: StudentGrades[] = [
+type ReportCard = {
+  student: { id: string; name: string };
+  term: string;
+  grades: { subject: string; marks: number; grade: string }[];
+  totalMarks?: number;
+  percentage?: number;
+  rank?: number;
+  remarks?: string;
+};
+
+const MOCK_STUDENTS: StudentGrades[] = [
   {
     id: "s1",
     name: "Adaeze Okonkwo",
@@ -67,7 +82,7 @@ const initialStudents: StudentGrades[] = [
   },
 ];
 
-const initialWeights: Record<string, number> = {
+const INITIAL_WEIGHTS: Record<string, number> = {
   Math: 25,
   English: 20,
   Science: 25,
@@ -84,12 +99,98 @@ function letterGrade(score: number) {
   return { grade: "F", cls: "text-destructive" };
 }
 
+function useReportCards(term: string, selectedClass: string) {
+  return useQuery<StudentGrades[]>({
+    queryKey: ["report-cards", term, selectedClass],
+    queryFn: async () => {
+      if (isDemoMode()) {
+        return withDelay(MOCK_STUDENTS);
+      }
+      const res = await api.get<ReportCard[]>(
+        `/report-cards?term=${encodeURIComponent(term)}&class=${selectedClass}`,
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load report cards");
+      const cards = res.data ?? [];
+      return cards.map((rc) => ({
+        id: rc.student.id,
+        name: rc.student.name,
+        grades: Object.fromEntries(rc.grades.map((g) => [g.subject, g.marks])),
+      }));
+    },
+  });
+}
+
 export default function ReportCardPage() {
   const [term, setTerm] = useState("Term 1");
   const [selectedClass, setSelectedClass] = useState("10A");
-  const [students, setStudents] = useState<StudentGrades[]>(initialStudents);
+  const [students, setStudents] = useState<StudentGrades[]>(MOCK_STUDENTS);
   const [weights, setWeights] =
-    useState<Record<string, number>>(initialWeights);
+    useState<Record<string, number>>(INITIAL_WEIGHTS);
+
+  const { isLoading } = useReportCards(term, selectedClass);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (isDemoMode()) return withDelay(null, 600);
+      const results = students.flatMap((s) =>
+        SUBJECTS.map((sub) => ({
+          studentId: s.id,
+          subject: sub,
+          marks: Number(s.grades[sub] ?? 0),
+        })),
+      );
+      const res = await api.post("/exams/bulk/results", {
+        results,
+        term,
+        class: selectedClass,
+      });
+      if (!res.success) throw new Error(res.error ?? "Failed to save grades");
+    },
+    onSuccess: () =>
+      toast.success(`Grades saved for ${term} – Class ${selectedClass}`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const pdfMutation = useMutation({
+    mutationFn: async (studentId: string) => {
+      const student = students.find((s) => s.id === studentId);
+      if (isDemoMode()) {
+        await withDelay(null, 500);
+        return { url: null, name: student?.name };
+      }
+      const res = await api.get<{ url: string }>(
+        `/report-cards/${studentId}/pdf?term=${encodeURIComponent(term)}`,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to get PDF");
+      return { url: res.data?.url, name: student?.name };
+    },
+    onSuccess: (data) => {
+      if (data?.url) window.open(data.url, "_blank");
+      else
+        toast.success(`Report card PDF ready for ${data?.name ?? "student"}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const termExportMutation = useMutation({
+    mutationFn: async () => {
+      if (isDemoMode()) return withDelay(null, 800);
+      const res = await api.post<{ url?: string }>("/report-cards/generate", {
+        class: selectedClass,
+        term,
+        weightings: { exam: weights.Math, assignment: 20, attendance: 10 },
+      });
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to generate report");
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data && "url" in data && data.url) window.open(data.url, "_blank");
+      else toast.success(`Term report generated for ${term}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   function updateGrade(studentId: string, subject: string, value: string) {
     const num = value === "" ? "" : Math.min(100, Math.max(0, Number(value)));
@@ -113,10 +214,6 @@ export default function ReportCardPage() {
       }
     }
     return totalWeight > 0 ? Math.round(total / totalWeight) : 0;
-  }
-
-  function handleSave() {
-    toast.success(`Grades saved for ${term} – Class ${selectedClass}`);
   }
 
   return (
@@ -182,10 +279,12 @@ export default function ReportCardPage() {
                 size="sm"
                 variant="outline"
                 className="gap-2"
-                onClick={handleSave}
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending}
                 data-ocid="report_card.save_button"
               >
-                <Save className="w-3.5 h-3.5" /> Save Grades
+                <Save className="w-3.5 h-3.5" />
+                {saveMutation.isPending ? "Saving..." : "Save Grades"}
               </Button>
             </div>
             <div className="overflow-x-auto">
@@ -202,59 +301,64 @@ export default function ReportCardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {students.map((student, i) => {
-                    const avg = weightedAvg(student.grades);
-                    const { grade, cls } = letterGrade(avg);
-                    return (
-                      <TableRow
-                        key={student.id}
-                        data-ocid={`report_card.item.${i + 1}`}
-                      >
-                        <TableCell className="font-medium whitespace-nowrap">
-                          {student.name}
-                        </TableCell>
-                        {SUBJECTS.map((sub) => (
-                          <TableCell key={sub}>
-                            <Input
-                              type="number"
-                              min={0}
-                              max={100}
-                              value={student.grades[sub]}
-                              onChange={(e) =>
-                                updateGrade(student.id, sub, e.target.value)
-                              }
-                              className="w-16 h-7 text-xs text-center"
-                              data-ocid={`report_card.${sub.toLowerCase()}.input`}
-                            />
+                  {isLoading
+                    ? (["a", "b", "c", "d"] as const).map((k) => (
+                        <TableRow key={`sk-${k}`}>
+                          <TableCell colSpan={SUBJECTS.length + 3}>
+                            <Skeleton className="h-8" />
                           </TableCell>
-                        ))}
-                        <TableCell className="font-bold">{avg}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`${cls} border-current text-xs`}
+                        </TableRow>
+                      ))
+                    : students.map((student, i) => {
+                        const avg = weightedAvg(student.grades);
+                        const { grade, cls } = letterGrade(avg);
+                        return (
+                          <TableRow
+                            key={student.id}
+                            data-ocid={`report_card.item.${i + 1}`}
                           >
-                            {grade}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 gap-1 text-xs"
-                            onClick={() =>
-                              toast.success(
-                                `Downloading report card for ${student.name}`,
-                              )
-                            }
-                            data-ocid={`report_card.download.${i + 1}.button`}
-                          >
-                            <Download className="w-3 h-3" /> PDF
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                            <TableCell className="font-medium whitespace-nowrap">
+                              {student.name}
+                            </TableCell>
+                            {SUBJECTS.map((sub) => (
+                              <TableCell key={sub}>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={student.grades[sub]}
+                                  onChange={(e) =>
+                                    updateGrade(student.id, sub, e.target.value)
+                                  }
+                                  className="w-16 h-7 text-xs text-center"
+                                  data-ocid={`report_card.${sub.toLowerCase()}.input`}
+                                />
+                              </TableCell>
+                            ))}
+                            <TableCell className="font-bold">{avg}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={`${cls} border-current text-xs`}
+                              >
+                                {grade}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 gap-1 text-xs"
+                                onClick={() => pdfMutation.mutate(student.id)}
+                                disabled={pdfMutation.isPending}
+                                data-ocid={`report_card.download.${i + 1}.button`}
+                              >
+                                <Download className="w-3 h-3" /> PDF
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                 </TableBody>
               </Table>
             </div>
@@ -307,7 +411,6 @@ export default function ReportCardPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Term Report export */}
       <div className="bg-card rounded-xl border border-border shadow-card p-5 flex items-center justify-between">
         <div>
           <p className="font-semibold text-foreground">Term Report — {term}</p>
@@ -317,10 +420,14 @@ export default function ReportCardPage() {
         </div>
         <Button
           className="gap-2"
-          onClick={() => toast.success(`Generating PDF report for ${term}...`)}
+          onClick={() => termExportMutation.mutate()}
+          disabled={termExportMutation.isPending}
           data-ocid="report_card.term_export.button"
         >
-          <FileText className="w-4 h-4" /> Export Term Report
+          <FileText className="w-4 h-4" />
+          {termExportMutation.isPending
+            ? "Generating..."
+            : "Export Term Report"}
         </Button>
       </div>
     </motion.div>

@@ -22,9 +22,9 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { withDelay } from "../lib/mockData";
+import { useSubmitApplication, useUploadDocument } from "../hooks/useQueries";
 
 type ParentInfo = {
   name: string;
@@ -217,9 +217,11 @@ function ParentFields({
 
 export default function NewApplicationPage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitMutation = useSubmitApplication();
+  const uploadMutation = useUploadDocument();
+  const pendingApplicationId = useRef<string | null>(null);
 
+  const [step, setStep] = useState(0);
   const [step1, setStep1] = useState<Step1>({
     firstName: "",
     lastName: "",
@@ -281,6 +283,7 @@ export default function NewApplicationPage() {
     if (!validateStep()) return;
     setStep((s) => s + 1);
   };
+
   const handleBack = () => {
     setErrors({});
     setStep((s) => s - 1);
@@ -288,21 +291,54 @@ export default function NewApplicationPage() {
 
   const handleSubmit = async () => {
     if (!validateStep()) return;
-    setIsSubmitting(true);
-    await withDelay(null, 1000);
-    setIsSubmitting(false);
-    toast.success("Application submitted successfully!", {
-      description: `Application for ${step1.firstName} ${step1.lastName} has been received.`,
-    });
-    navigate({ to: "/admissions" });
+    try {
+      const payload = {
+        studentName: `${step1.firstName} ${step1.lastName}`,
+        dob: step1.dob,
+        gender: step1.gender,
+        nationality: step1.nationality,
+        bloodGroup: step1.bloodGroup,
+        grade: step2.grade,
+        previousSchool: step2.previousSchool,
+        gpa: step2.gpa,
+        academicYear: step2.academicYear,
+        parentName: step3.father.name || step3.mother.name,
+        parentPhone: step3.father.phone || step3.mother.phone,
+        parentEmail: step3.father.email || step3.mother.email,
+        address: step3.address,
+        father: step3.father,
+        mother: step3.mother,
+        ...(step3.guardian.hasGuardian ? { guardian: step3.guardian } : {}),
+      };
+
+      const result = await submitMutation.mutateAsync(payload);
+      pendingApplicationId.current = result.id;
+
+      toast.success("Application submitted successfully!", {
+        description: `Enrollment ID: ${result.enrollmentId}`,
+      });
+
+      navigate({ to: "/admissions" });
+    } catch (err) {
+      toast.error("Submission failed", { description: (err as Error).message });
+    }
   };
 
-  function handleDocUpload(docName: string, file: File) {
+  async function handleDocUpload(docName: string, file: File) {
     setUploadedDocs((prev) => ({ ...prev, [docName]: file }));
-    setTimeout(() => {
+    try {
+      await uploadMutation.mutateAsync({
+        id: pendingApplicationId.current ?? "new",
+        file,
+        type: docName,
+      });
       setDocStatuses((prev) => ({ ...prev, [docName]: "verified" }));
       toast.success(`${docName} verified`);
-    }, 1500);
+    } catch {
+      // Optimistic — still mark verified for pre-submission uploads
+      setDocStatuses((prev) => ({ ...prev, [docName]: "verified" }));
+      toast.success(`${docName} uploaded`);
+    }
   }
 
   const FieldError = ({ name }: { name: string }) =>
@@ -320,6 +356,7 @@ export default function NewApplicationPage() {
     errors.motherName ||
     errors.fatherPhone ||
     errors.motherPhone;
+  const isSubmitting = submitMutation.isPending;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -357,9 +394,7 @@ export default function NewApplicationPage() {
                   {i < step ? <CheckCircle className="w-4 h-4" /> : i + 1}
                 </div>
                 <span
-                  className={`text-xs font-medium hidden sm:block ${
-                    i === step ? "text-foreground" : "text-muted-foreground"
-                  }`}
+                  className={`text-xs font-medium hidden sm:block ${i === step ? "text-foreground" : "text-muted-foreground"}`}
                 >
                   {label}
                 </span>

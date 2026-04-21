@@ -1,0 +1,24 @@
+{
+  "overview": "EscolaUI is a multi-tenant school management system with a separate platform admin panel and school-side panel. The platform admin manages tenant subscriptions, sends bulk payment reminders with in-app notifications to school admins, and views an audit log of all reminders sent.",
+  "features": [
+    "Separate platform admin and school admin panels with distinct layouts and navigation",
+    "Subscription panel showing all tenants' billing status, plan, and payment dates",
+    "Bulk payment reminders with select-all or select-specific tenants",
+    "In-app notifications delivered to tenant admins when reminders are sent",
+    "Immutable reminder log with timestamp, recipient, message, and delivery status",
+    "16 school management modules: Admissions, Attendance, Fees, Students, Exams, Online Classes, ID Cards, Report Cards, Notifications, Teacher, HR & Payroll, and more",
+    "Role-based access control with per-role sidebar and route-level enforcement",
+    "Multi-tenant support with per-school branding and color themes",
+    "Demo mode for evaluation without backend connectivity"
+  ],
+  "category": "productivity",
+  "tags": [
+    "school-management",
+    "multi-tenant",
+    "admin-panel",
+    "subscriptions",
+    "notifications",
+    "edtech"
+  ],
+  "last_updated": "2026-04-21T07:13:59.402Z"
+}

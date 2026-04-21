@@ -5,26 +5,50 @@ import { useAuth } from "../contexts/AuthContext";
 export default function ProtectedRoute({
   children,
   allowedRoles,
+  requirePlatformAdmin,
 }: {
   children: React.ReactNode;
   allowedRoles?: string[];
+  requirePlatformAdmin?: boolean;
 }) {
   const { isAuthenticated, isLoading, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (isLoading) return;
+
+    if (!isAuthenticated) {
       navigate({ to: "/login" });
-    } else if (
-      !isLoading &&
-      isAuthenticated &&
+      return;
+    }
+
+    // Platform admin routes: only the designated platform super-admin may access.
+    // Check isPlatformAdmin flag first; fall back to email for live deployments
+    // where the API may not yet return that field.
+    const isPlatformAdmin =
+      user?.isPlatformAdmin === true || user?.email === "admin@escola.com";
+    if (requirePlatformAdmin && !isPlatformAdmin) {
+      navigate({ to: "/dashboard" });
+      return;
+    }
+
+    // School-side role check
+    if (
+      !requirePlatformAdmin &&
       allowedRoles &&
       user &&
       !allowedRoles.includes(user.role)
     ) {
       navigate({ to: "/dashboard" });
     }
-  }, [isAuthenticated, isLoading, navigate, allowedRoles, user]);
+  }, [
+    isAuthenticated,
+    isLoading,
+    navigate,
+    allowedRoles,
+    user,
+    requirePlatformAdmin,
+  ]);
 
   if (isLoading) {
     return (
@@ -40,6 +64,21 @@ export default function ProtectedRoute({
   }
 
   if (!isAuthenticated) return null;
-  if (allowedRoles && user && !allowedRoles.includes(user.role)) return null;
+
+  if (
+    requirePlatformAdmin &&
+    !(user?.isPlatformAdmin === true || user?.email === "admin@escola.com")
+  )
+    return null;
+
+  if (
+    !requirePlatformAdmin &&
+    allowedRoles &&
+    user &&
+    !allowedRoles.includes(user.role)
+  ) {
+    return null;
+  }
+
   return <>{children}</>;
 }

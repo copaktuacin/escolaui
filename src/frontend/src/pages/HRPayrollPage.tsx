@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -18,6 +19,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/lib/api";
+import { isDemoMode } from "@/lib/demoMode";
+import { withDelay } from "@/lib/mockData";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, PlusCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
@@ -27,12 +32,23 @@ type StaffRecord = {
   id: string;
   name: string;
   department: string;
-  position: string;
-  joinDate: string;
+  position?: string;
+  role?: string;
+  joinDate?: string;
+  salary?: number;
   status: "active" | "on_leave" | "inactive";
 };
 
-const initialStaff: StaffRecord[] = [
+type AttendanceMark = "P" | "A" | "L";
+
+type PayrollResult = {
+  baseSalary: number;
+  deductions: number;
+  bonuses: number;
+  netPay: number;
+};
+
+const MOCK_STAFF: StaffRecord[] = [
   {
     id: "st1",
     name: "Dr. Samuel Adeyemi",
@@ -83,10 +99,7 @@ const initialStaff: StaffRecord[] = [
   },
 ];
 
-const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
-const ATTEND_DISPLAY = MONTH_DAYS.slice(0, 10); // Show first 10 days for brevity
-
-const staffAttendance: Record<string, Record<number, "P" | "A" | "L">> = {
+const MOCK_ATTENDANCE: Record<string, Record<number, AttendanceMark>> = {
   st1: {
     1: "P",
     2: "P",
@@ -161,6 +174,8 @@ const staffAttendance: Record<string, Record<number, "P" | "A" | "L">> = {
   },
 };
 
+const ATTEND_DISPLAY = Array.from({ length: 10 }, (_, i) => i + 1);
+
 const statusBadge: Record<StaffRecord["status"], string> = {
   active: "bg-success/10 text-success border-success/30",
   on_leave: "bg-warning/10 text-warning border-warning/30",
@@ -173,18 +188,164 @@ const attendColor: Record<string, string> = {
   L: "bg-warning/10 text-warning",
 };
 
+const CURRENT_MONTH = new Date().toLocaleString("default", { month: "long" });
+const CURRENT_YEAR = new Date().getFullYear();
+
+function useStaff() {
+  return useQuery<StaffRecord[]>({
+    queryKey: ["hr-staff"],
+    queryFn: async () => {
+      if (isDemoMode()) return withDelay(MOCK_STAFF);
+      const res = await api.get<{ data: StaffRecord[] }>("/hr/staff?limit=50");
+      if (!res.success) throw new Error(res.error ?? "Failed to load staff");
+      const d = res.data;
+      if (!d) return [];
+      if ("data" in d) return d.data;
+      return d as unknown as StaffRecord[];
+    },
+  });
+}
+
+function useStaffAttendance(staffId: string, month: number, year: number) {
+  return useQuery<Record<number, AttendanceMark>>({
+    queryKey: ["hr-attendance", staffId, month, year],
+    queryFn: async () => {
+      if (isDemoMode()) return withDelay(MOCK_ATTENDANCE[staffId] ?? {});
+      const res = await api.get<{ date: string; status: string }[]>(
+        `/hr/attendance?staffId=${staffId}&month=${month}&year=${year}`,
+      );
+      if (!res.success) return {};
+      const records = res.data ?? [];
+      return Object.fromEntries(
+        records.map((r) => {
+          const day = new Date(r.date).getDate();
+          const mark: AttendanceMark =
+            r.status === "present" ? "P" : r.status === "absent" ? "A" : "L";
+          return [day, mark];
+        }),
+      );
+    },
+    enabled: !!staffId,
+  });
+}
+
 export default function HRPayrollPage() {
-  const [staff] = useState<StaffRecord[]>(initialStaff);
-  const [selectedStaff, setSelectedStaff] = useState(staff[0].id);
+  const qc = useQueryClient();
+  const { data: staff = [], isLoading: staffLoading } = useStaff();
+  const [selectedStaff, setSelectedStaff] = useState<string>("");
   const [salary, setSalary] = useState({
     basic: 150000,
     housing: 30000,
     transport: 15000,
     deductions: 20000,
   });
+  const [payrollResult, setPayrollResult] = useState<PayrollResult | null>(
+    null,
+  );
+  const [addOpen, setAddOpen] = useState(false);
+  const [newStaff, setNewStaff] = useState({
+    name: "",
+    department: "",
+    position: "",
+    salary: "",
+  });
+
+  const currentStaffId = selectedStaff || staff[0]?.id;
+
+  const { data: attendanceData = {} } = useStaffAttendance(
+    currentStaffId,
+    new Date().getMonth() + 1,
+    new Date().getFullYear(),
+  );
 
   const net =
     salary.basic + salary.housing + salary.transport - salary.deductions;
+
+  const computeMutation = useMutation({
+    mutationFn: async () => {
+      if (isDemoMode()) {
+        await withDelay(null, 700);
+        return {
+          baseSalary: salary.basic,
+          deductions: salary.deductions,
+          bonuses: salary.housing + salary.transport,
+          netPay: net,
+        };
+      }
+      const res = await api.post<PayrollResult>("/hr/payroll/compute", {
+        staffId: currentStaffId,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
+      });
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to compute payroll");
+      return (
+        res.data ?? {
+          baseSalary: salary.basic,
+          deductions: salary.deductions,
+          bonuses: 0,
+          netPay: net,
+        }
+      );
+    },
+    onSuccess: (data) => {
+      if (data) setPayrollResult(data);
+      toast.success("Payroll computed successfully");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const payslipMutation = useMutation({
+    mutationFn: async () => {
+      const staffName = staff.find((s) => s.id === currentStaffId)?.name;
+      if (isDemoMode()) {
+        await withDelay(null, 600);
+        return { payslipUrl: null, name: staffName };
+      }
+      const res = await api.post<{ payslipId: string; payslipUrl?: string }>(
+        "/hr/payslips/generate",
+        {
+          staffId: currentStaffId,
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+        },
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to generate payslip");
+      return { payslipUrl: res.data?.payslipUrl, name: staffName };
+    },
+    onSuccess: (data) => {
+      if (data?.payslipUrl) window.open(data.payslipUrl, "_blank");
+      else
+        toast.success(`Payslip generated for ${data?.name ?? "staff member"}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const addStaffMutation = useMutation({
+    mutationFn: async (payload: typeof newStaff) => {
+      if (!payload.name.trim()) throw new Error("Staff name is required");
+      if (isDemoMode()) {
+        await withDelay(null, 400);
+        return { id: `st${Date.now()}`, ...payload, status: "active" as const };
+      }
+      const res = await api.post<StaffRecord>("/hr/staff", {
+        name: payload.name,
+        department: payload.department,
+        salary: Number(payload.salary) || 0,
+        joinDate: new Date().toISOString().split("T")[0],
+      });
+      if (!res.success) throw new Error(res.error ?? "Failed to add staff");
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["hr-staff"] });
+      toast.success("Staff member added");
+      setAddOpen(false);
+      setNewStaff({ name: "", department: "", position: "", salary: "" });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   return (
     <motion.div
@@ -215,12 +376,90 @@ export default function HRPayrollPage() {
               <Button
                 size="sm"
                 className="gap-2"
-                onClick={() => toast.info("Add staff form coming soon")}
+                onClick={() => setAddOpen(!addOpen)}
                 data-ocid="hr.add_staff.button"
               >
                 <PlusCircle className="w-4 h-4" /> Add Staff
               </Button>
             </div>
+
+            {addOpen && (
+              <div className="p-5 border-b border-border bg-muted/20 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Full Name *</Label>
+                    <Input
+                      value={newStaff.name}
+                      onChange={(e) =>
+                        setNewStaff((s) => ({ ...s, name: e.target.value }))
+                      }
+                      placeholder="Name"
+                      className="h-8 text-xs"
+                      data-ocid="hr.staff_name.input"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Department</Label>
+                    <Input
+                      value={newStaff.department}
+                      onChange={(e) =>
+                        setNewStaff((s) => ({
+                          ...s,
+                          department: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Academics"
+                      className="h-8 text-xs"
+                      data-ocid="hr.staff_dept.input"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Position</Label>
+                    <Input
+                      value={newStaff.position}
+                      onChange={(e) =>
+                        setNewStaff((s) => ({ ...s, position: e.target.value }))
+                      }
+                      placeholder="e.g. Teacher"
+                      className="h-8 text-xs"
+                      data-ocid="hr.staff_position.input"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Basic Salary (₦)</Label>
+                    <Input
+                      type="number"
+                      value={newStaff.salary}
+                      onChange={(e) =>
+                        setNewStaff((s) => ({ ...s, salary: e.target.value }))
+                      }
+                      placeholder="150000"
+                      className="h-8 text-xs"
+                      data-ocid="hr.staff_salary.input"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAddOpen(false)}
+                    data-ocid="hr.add_staff.cancel_button"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => addStaffMutation.mutate(newStaff)}
+                    disabled={addStaffMutation.isPending}
+                    data-ocid="hr.add_staff.submit_button"
+                  >
+                    {addStaffMutation.isPending ? "Adding..." : "Add Staff"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <Table data-ocid="hr.directory.table">
                 <TableHeader>
@@ -237,26 +476,41 @@ export default function HRPayrollPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {staff.map((s, i) => (
-                    <TableRow key={s.id} data-ocid={`hr.staff.item.${i + 1}`}>
-                      <TableCell className="font-medium">{s.name}</TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                        {s.department}
-                      </TableCell>
-                      <TableCell className="text-sm">{s.position}</TableCell>
-                      <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
-                        {s.joinDate}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={`text-xs capitalize ${statusBadge[s.status]}`}
+                  {staffLoading
+                    ? (["a", "b", "c", "d"] as const).map((k) => (
+                        <TableRow key={`sk-${k}`}>
+                          <TableCell colSpan={5}>
+                            <Skeleton className="h-8" />
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    : staff.map((s, i) => (
+                        <TableRow
+                          key={s.id}
+                          data-ocid={`hr.staff.item.${i + 1}`}
                         >
-                          {s.status.replace("_", " ")}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          <TableCell className="font-medium">
+                            {s.name}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                            {s.department}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {s.position ?? s.role ?? "–"}
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                            {s.joinDate ?? "–"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs capitalize ${statusBadge[s.status]}`}
+                            >
+                              {s.status.replace("_", " ")}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
                 </TableBody>
               </Table>
             </div>
@@ -271,40 +525,52 @@ export default function HRPayrollPage() {
                 <h2 className="font-semibold text-foreground">
                   Salary Computation
                 </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {CURRENT_MONTH} {CURRENT_YEAR}
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Staff Member</Label>
-                <Select value={selectedStaff} onValueChange={setSelectedStaff}>
-                  <SelectTrigger data-ocid="hr.payroll_staff.select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {staff.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {[
-                { key: "basic" as const, label: "Basic Pay", color: "" },
-                {
-                  key: "housing" as const,
-                  label: "Housing Allowance",
-                  color: "",
-                },
-                {
-                  key: "transport" as const,
-                  label: "Transport Allowance",
-                  color: "",
-                },
-                {
-                  key: "deductions" as const,
-                  label: "Deductions",
-                  color: "text-destructive",
-                },
-              ].map(({ key, label, color }) => (
+              {staffLoading ? (
+                <Skeleton className="h-10" />
+              ) : (
+                <div className="space-y-2">
+                  <Label className="text-xs">Staff Member</Label>
+                  <Select
+                    value={currentStaffId}
+                    onValueChange={setSelectedStaff}
+                  >
+                    <SelectTrigger data-ocid="hr.payroll_staff.select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {staff.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {(
+                [
+                  { key: "basic" as const, label: "Basic Pay", color: "" },
+                  {
+                    key: "housing" as const,
+                    label: "Housing Allowance",
+                    color: "",
+                  },
+                  {
+                    key: "transport" as const,
+                    label: "Transport Allowance",
+                    color: "",
+                  },
+                  {
+                    key: "deductions" as const,
+                    label: "Deductions",
+                    color: "text-destructive",
+                  },
+                ] as const
+              ).map(({ key, label, color }) => (
                 <div key={key} className="space-y-1.5">
                   <Label className={`text-xs ${color}`}>{label} (₦)</Label>
                   <Input
@@ -321,6 +587,15 @@ export default function HRPayrollPage() {
                   />
                 </div>
               ))}
+              <Button
+                className="w-full gap-2"
+                variant="outline"
+                onClick={() => computeMutation.mutate()}
+                disabled={computeMutation.isPending}
+                data-ocid="hr.compute_payroll.button"
+              >
+                {computeMutation.isPending ? "Computing..." : "Compute Payroll"}
+              </Button>
             </div>
 
             <div className="space-y-4">
@@ -329,10 +604,10 @@ export default function HRPayrollPage() {
                   Net Pay
                 </p>
                 <p className="text-4xl font-bold text-foreground">
-                  ₦{net.toLocaleString()}
+                  ₦{(payrollResult?.netPay ?? net).toLocaleString()}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {staff.find((s) => s.id === selectedStaff)?.name}
+                  {staff.find((s) => s.id === currentStaffId)?.name}
                 </p>
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between">
@@ -360,14 +635,14 @@ export default function HRPayrollPage() {
               </div>
               <Button
                 className="w-full gap-2"
-                onClick={() =>
-                  toast.success(
-                    `Payslip generated for ${staff.find((s) => s.id === selectedStaff)?.name}`,
-                  )
-                }
+                onClick={() => payslipMutation.mutate()}
+                disabled={payslipMutation.isPending}
                 data-ocid="hr.generate_payslip.button"
               >
-                <Download className="w-4 h-4" /> Generate Payslip
+                <Download className="w-4 h-4" />
+                {payslipMutation.isPending
+                  ? "Generating..."
+                  : "Generate Payslip"}
               </Button>
             </div>
           </div>
@@ -378,7 +653,7 @@ export default function HRPayrollPage() {
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
             <div className="p-5 border-b border-border">
               <h2 className="font-semibold text-foreground">
-                Staff Attendance — March 2026
+                Staff Attendance — {CURRENT_MONTH} {CURRENT_YEAR}
               </h2>
               <p className="text-xs text-muted-foreground mt-1">
                 Showing days 1–10 · P = Present, A = Absent, L = Leave
@@ -397,28 +672,39 @@ export default function HRPayrollPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {staff.map((s, i) => (
-                    <TableRow
-                      key={s.id}
-                      data-ocid={`hr.attendance.item.${i + 1}`}
-                    >
-                      <TableCell className="font-medium whitespace-nowrap">
-                        {s.name}
-                      </TableCell>
-                      {ATTEND_DISPLAY.map((d) => {
-                        const mark = staffAttendance[s.id]?.[d] ?? "P";
-                        return (
-                          <TableCell key={d} className="text-center p-1">
-                            <span
-                              className={`inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-bold ${attendColor[mark]}`}
-                            >
-                              {mark}
-                            </span>
+                  {staffLoading
+                    ? (["a", "b", "c"] as const).map((k) => (
+                        <TableRow key={`sk-${k}`}>
+                          <TableCell colSpan={11}>
+                            <Skeleton className="h-8" />
                           </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))}
+                        </TableRow>
+                      ))
+                    : staff.map((s, i) => (
+                        <TableRow
+                          key={s.id}
+                          data-ocid={`hr.attendance.item.${i + 1}`}
+                        >
+                          <TableCell className="font-medium whitespace-nowrap">
+                            {s.name}
+                          </TableCell>
+                          {ATTEND_DISPLAY.map((d) => {
+                            const mark: AttendanceMark =
+                              (s.id === currentStaffId
+                                ? attendanceData[d]
+                                : MOCK_ATTENDANCE[s.id]?.[d]) ?? "P";
+                            return (
+                              <TableCell key={d} className="text-center p-1">
+                                <span
+                                  className={`inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-bold ${attendColor[mark]}`}
+                                >
+                                  {mark}
+                                </span>
+                              </TableCell>
+                            );
+                          })}
+                        </TableRow>
+                      ))}
                 </TableBody>
               </Table>
             </div>

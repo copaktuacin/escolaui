@@ -2,12 +2,13 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
   BarChart3,
   Bell,
   BookOpen,
+  Building2,
   Calendar,
   CalendarCheck,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   CreditCard,
   Crown,
   DollarSign,
+  FlaskConical,
   GraduationCap,
   LayoutDashboard,
   LogOut,
@@ -28,11 +30,23 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useSchoolProfile } from "../contexts/SchoolProfileContext";
 import { RATE_LIMIT_EVENT } from "../lib/api";
+import { isDemoMode } from "../lib/demoMode";
+import { platformAdminNotifications } from "../lib/mockData";
 import { roleLabels, roleNavPaths } from "../lib/rolePermissions";
+
+// Map demo admin emails → tenantId for unread count
+const DEMO_ADMIN_TENANT_MAP: Record<string, string> = {
+  "admin@escolamodel.edu.ng": "demo-escola",
+  "admin@cityacademy.edu": "demo-city-academy",
+  "contact@sunriseintl.edu": "demo-sunrise",
+  "hello@greenfieldhs.edu": "demo-greenfield",
+  "info@riversideacademy.edu": "demo-riverside",
+  "admin@escola.com": "demo-escola",
+};
 
 type NavItem = {
   label: string;
@@ -82,6 +96,16 @@ const navGroups: NavGroup[] = [
       { label: "Settings", path: "/settings", icon: Settings },
     ],
   },
+  {
+    label: "Platform",
+    items: [
+      {
+        label: "Tenant Management",
+        path: "/tenant-management",
+        icon: Building2,
+      },
+    ],
+  },
 ];
 
 type RateLimitInfo = {
@@ -93,10 +117,23 @@ type RateLimitInfo = {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const { profile } = useSchoolProfile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rateLimit, setRateLimit] = useState<RateLimitInfo | null>(null);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
+  const demoActive = isDemoMode();
+
+  // Compute unread platform notifications for non-platform-admin users
+  const isPlatformAdmin = user?.email === "admin@escola.com";
+  const tenantId = user?.email
+    ? (DEMO_ADMIN_TENANT_MAP[user.email] ?? "demo-escola")
+    : "demo-escola";
+  const unreadPlatformCount = useMemo(() => {
+    if (isPlatformAdmin || !user) return 0;
+    const notifs = platformAdminNotifications[tenantId] ?? [];
+    return notifs.filter((n) => !n.read).length;
+  }, [isPlatformAdmin, user, tenantId]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -137,7 +174,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           "linear-gradient(180deg, oklch(0.2 0.04 240) 0%, oklch(0.28 0.05 235) 100%)",
       }}
     >
-      {/* Logo */}
+      {/* Logo + School Name */}
       <div
         className="px-6 py-5 border-b"
         style={{ borderColor: "oklch(0.3 0.04 240)" }}
@@ -154,13 +191,34 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <GraduationCap className="w-5 h-5 text-primary-foreground" />
             </div>
           )}
-          <span className="text-lg font-bold text-sidebar-foreground tracking-tight">
+          <span className="text-lg font-bold text-sidebar-foreground tracking-tight truncate">
             {profile.schoolName}
           </span>
         </div>
-        <p className="text-xs mt-1" style={{ color: "oklch(0.65 0.03 240)" }}>
+        <p
+          className="text-xs mt-1 truncate"
+          style={{ color: "oklch(0.65 0.03 240)" }}
+        >
           {profile.tagline}
         </p>
+
+        {/* Demo Mode badge */}
+        {demoActive && (
+          <div className="mt-2.5">
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest"
+              style={{
+                background: "oklch(0.85 0.15 85 / 0.18)",
+                color: "oklch(0.82 0.16 85)",
+                border: "1px solid oklch(0.75 0.18 85 / 0.35)",
+              }}
+              data-ocid="sidebar.demo_mode.toggle"
+            >
+              <FlaskConical className="w-2.5 h-2.5" />
+              Demo Mode
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Nav Groups */}
@@ -187,24 +245,36 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     data-ocid={`nav.${item.label.toLowerCase().replace(/[^a-z0-9]/g, "_")}.link`}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group ${
                       active
-                        ? "text-white"
+                        ? ""
                         : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-white/5"
                     }`}
                     style={
                       active
                         ? {
-                            background: "oklch(0.42 0.14 255 / 0.25)",
-                            color: "white",
+                            background: "var(--color-primary-light)",
+                            color: "var(--color-primary-foreground)",
+                            boxShadow: "inset 2px 0 0 var(--color-primary)",
                           }
                         : {}
                     }
                   >
-                    <item.icon
-                      className={`w-4 h-4 flex-shrink-0 ${active ? "text-primary" : ""}`}
-                    />
+                    <span
+                      style={
+                        active
+                          ? { color: "var(--color-primary-foreground)" }
+                          : {}
+                      }
+                    >
+                      <item.icon className="w-4 h-4 flex-shrink-0" />
+                    </span>
                     <span>{item.label}</span>
                     {active && (
-                      <ChevronRight className="w-3 h-3 ml-auto text-primary" />
+                      <span
+                        style={{ color: "var(--color-primary-foreground)" }}
+                        className="ml-auto"
+                      >
+                        <ChevronRight className="w-3 h-3" />
+                      </span>
                     )}
                   </Link>
                 );
@@ -274,6 +344,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main area */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Demo mode top banner */}
+        {demoActive && (
+          <div
+            className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium"
+            style={{
+              background: "oklch(0.85 0.15 85 / 0.12)",
+              borderBottom: "1px solid oklch(0.75 0.18 85 / 0.25)",
+              color: "oklch(0.7 0.16 85)",
+            }}
+            data-ocid="topbar.demo_banner"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>
+              Demo Mode — all data is simulated. No API calls are made.
+            </span>
+          </div>
+        )}
+
         {/* Rate limit banner */}
         <AnimatePresence>
           {rateLimit && !rateLimitDismissed && (
@@ -346,16 +434,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              className="relative p-2 rounded-lg hover:bg-accent transition-colors"
-              data-ocid="topbar.notifications.button"
-            >
-              <Bell className="w-5 h-5 text-muted-foreground" />
-              <Badge className="absolute -top-0.5 -right-0.5 w-4 h-4 p-0 text-[9px] flex items-center justify-center bg-destructive text-destructive-foreground border-0">
-                3
-              </Badge>
-            </button>
+            {!isPlatformAdmin && (
+              <button
+                type="button"
+                className="relative p-2 rounded-lg hover:bg-accent transition-colors"
+                onClick={() => navigate({ to: "/notifications" })}
+                aria-label={`Notifications${unreadPlatformCount > 0 ? ` — ${unreadPlatformCount} unread` : ""}`}
+                data-ocid="topbar.notifications.button"
+              >
+                <Bell className="w-5 h-5 text-muted-foreground" />
+                {unreadPlatformCount > 0 && (
+                  <Badge className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-0.5 text-[9px] flex items-center justify-center bg-destructive text-destructive-foreground border-0">
+                    {unreadPlatformCount}
+                  </Badge>
+                )}
+              </button>
+            )}
             <Button
               variant="outline"
               size="sm"

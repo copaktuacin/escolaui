@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -28,9 +29,14 @@ import {
   TrendingDown,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { type Invoice, mockInvoices } from "../lib/mockData";
+import {
+  useConcessions,
+  useInvoices,
+  usePayInvoice,
+} from "../hooks/useQueries";
+import type { Invoice } from "../lib/mockData";
 
 type FilterTab = "all" | "paid" | "pending" | "overdue";
 
@@ -40,47 +46,7 @@ const statusBadge: Record<Invoice["status"], string> = {
   overdue: "bg-destructive/10 text-destructive border-destructive/30",
 };
 
-type Concession = {
-  id: string;
-  student: string;
-  discountType: string;
-  amount: number;
-  approvedBy: string;
-};
-
-const mockConcessions: Concession[] = [
-  {
-    id: "c1",
-    student: "Adaeze Okonkwo",
-    discountType: "Academic Scholarship",
-    amount: 50000,
-    approvedBy: "Dr. Adeyemi",
-  },
-  {
-    id: "c2",
-    student: "Kofi Mensah",
-    discountType: "Sports Bursary",
-    amount: 30000,
-    approvedBy: "Mr. Bello",
-  },
-  {
-    id: "c3",
-    student: "Fatima Al-Hassan",
-    discountType: "Sibling Discount",
-    amount: 15000,
-    approvedBy: "Dr. Adeyemi",
-  },
-  {
-    id: "c4",
-    student: "Chidi Obi",
-    discountType: "Hardship Grant",
-    amount: 40000,
-    approvedBy: "Mrs. Okafor",
-  },
-];
-
 export default function FeesPage() {
-  const [invoices, setInvoices] = useState<Invoice[]>(mockInvoices);
   const [invoiceFilter, setInvoiceFilter] = useState<FilterTab>("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [recordDialogOpen, setRecordDialogOpen] = useState(false);
@@ -89,6 +55,35 @@ export default function FeesPage() {
   const [cardNumber, setCardNumber] = useState("");
   const [expiry, setExpiry] = useState("");
   const [cvv, setCvv] = useState("");
+  // Local paid-state overlay for optimistic UX without re-fetching
+  const [localPaidIds, setLocalPaidIds] = useState<Set<string>>(new Set());
+  const [localPaidDates, setLocalPaidDates] = useState<Record<string, string>>(
+    {},
+  );
+
+  const invoicesQuery = useInvoices({ status: invoiceFilter, limit: 50 });
+  const concessionsQuery = useConcessions();
+  const payMutation = usePayInvoice();
+
+  useEffect(() => {
+    if (invoicesQuery.error)
+      toast.error(
+        `Failed to load invoices: ${(invoicesQuery.error as Error).message}`,
+      );
+  }, [invoicesQuery.error]);
+
+  const allInvoices = invoicesQuery.data?.data ?? [];
+
+  // Apply local paid overlay
+  const invoices = allInvoices.map((inv) =>
+    localPaidIds.has(inv.id)
+      ? {
+          ...inv,
+          status: "paid" as const,
+          paidDate: localPaidDates[inv.id] ?? null,
+        }
+      : inv,
+  );
 
   const filtered =
     invoiceFilter === "all"
@@ -109,24 +104,28 @@ export default function FeesPage() {
     setRecordDialogOpen(true);
   }
 
-  function confirmPayment() {
+  async function confirmPayment() {
     if (!selectedInvoice) return;
-    setInvoices((prev) =>
-      prev.map((inv) =>
-        inv.id === selectedInvoice.id
-          ? {
-              ...inv,
-              status: "paid",
-              paidDate: new Date().toISOString().split("T")[0],
-            }
-          : inv,
-      ),
-    );
-    toast.success(`Payment recorded for ${selectedInvoice.studentName}`, {
-      description: `$${selectedInvoice.amount.toLocaleString()} – ${selectedInvoice.description}`,
-    });
-    setRecordDialogOpen(false);
-    setSelectedInvoice(null);
+    try {
+      await payMutation.mutateAsync({
+        id: selectedInvoice.id,
+        payload: {
+          amount: selectedInvoice.amount,
+          method: "cash",
+          transactionId: "",
+        },
+      });
+      const today = new Date().toISOString().split("T")[0];
+      setLocalPaidIds((prev) => new Set(prev).add(selectedInvoice.id));
+      setLocalPaidDates((prev) => ({ ...prev, [selectedInvoice.id]: today }));
+      toast.success(`Payment recorded for ${selectedInvoice.studentName}`, {
+        description: `$${selectedInvoice.amount.toLocaleString()} – ${selectedInvoice.description}`,
+      });
+      setRecordDialogOpen(false);
+      setSelectedInvoice(null);
+    } catch (e) {
+      toast.error(`Payment failed: ${(e as Error).message}`);
+    }
   }
 
   function openPayNow(invoice: Invoice) {
@@ -134,31 +133,35 @@ export default function FeesPage() {
     setPayDialogOpen(true);
   }
 
-  function handleOnlinePayment() {
+  async function handleOnlinePayment() {
     if (!payInvoice) return;
     if (!cardNumber.trim() || !expiry.trim() || !cvv.trim()) {
       toast.error("Please fill in all card details");
       return;
     }
-    setInvoices((prev) =>
-      prev.map((inv) =>
-        inv.id === payInvoice.id
-          ? {
-              ...inv,
-              status: "paid",
-              paidDate: new Date().toISOString().split("T")[0],
-            }
-          : inv,
-      ),
-    );
-    toast.success(
-      `Online payment of $${payInvoice.amount.toLocaleString()} processed successfully`,
-    );
-    setPayDialogOpen(false);
-    setPayInvoice(null);
-    setCardNumber("");
-    setExpiry("");
-    setCvv("");
+    try {
+      await payMutation.mutateAsync({
+        id: payInvoice.id,
+        payload: {
+          amount: payInvoice.amount,
+          method: "online",
+          transactionId: `TXN-${Date.now()}`,
+        },
+      });
+      const today = new Date().toISOString().split("T")[0];
+      setLocalPaidIds((prev) => new Set(prev).add(payInvoice.id));
+      setLocalPaidDates((prev) => ({ ...prev, [payInvoice.id]: today }));
+      toast.success(
+        `Online payment of $${payInvoice.amount.toLocaleString()} processed successfully`,
+      );
+      setPayDialogOpen(false);
+      setPayInvoice(null);
+      setCardNumber("");
+      setExpiry("");
+      setCvv("");
+    } catch (e) {
+      toast.error(`Payment failed: ${(e as Error).message}`);
+    }
   }
 
   const statCards = [
@@ -232,7 +235,11 @@ export default function FeesPage() {
                 <card.icon className={`w-4 h-4 ${card.color}`} />
               </div>
             </div>
-            <p className="text-2xl font-bold text-foreground">{card.value}</p>
+            {invoicesQuery.isLoading ? (
+              <Skeleton className="h-8 w-20" />
+            ) : (
+              <p className="text-2xl font-bold text-foreground">{card.value}</p>
+            )}
           </motion.div>
         ))}
       </div>
@@ -268,7 +275,22 @@ export default function FeesPage() {
               {(["all", "paid", "pending", "overdue"] as FilterTab[]).map(
                 (tab) => (
                   <TabsContent key={tab} value={tab}>
-                    {filtered.length === 0 ? (
+                    {invoicesQuery.isLoading ? (
+                      <div
+                        className="space-y-3 py-2"
+                        data-ocid="fees.loading_state"
+                      >
+                        {["a", "b", "c", "d", "e"].map((k) => (
+                          <div key={k} className="flex gap-4">
+                            <Skeleton className="h-4 w-20" />
+                            <Skeleton className="h-4 flex-1" />
+                            <Skeleton className="h-4 w-24" />
+                            <Skeleton className="h-6 w-16 rounded-full" />
+                            <Skeleton className="h-7 w-24" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : filtered.length === 0 ? (
                       <div
                         className="text-center py-16 text-muted-foreground"
                         data-ocid="fees.empty_state"
@@ -400,42 +422,49 @@ export default function FeesPage() {
                 Approved concessions and scholarship records
               </p>
             </div>
-            <div className="overflow-x-auto">
-              <Table data-ocid="fees.concessions.table">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Student</TableHead>
-                    <TableHead>Discount Type</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Approved By</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mockConcessions.map((c, i) => (
-                    <TableRow
-                      key={c.id}
-                      data-ocid={`fees.concession.item.${i + 1}`}
-                    >
-                      <TableCell className="font-medium">{c.student}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className="text-xs bg-primary/10 text-primary border-primary/30"
-                        >
-                          {c.discountType}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-semibold">
-                        ${c.amount.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {c.approvedBy}
-                      </TableCell>
+            {concessionsQuery.isLoading ? (
+              <div className="p-5 space-y-3">
+                {["a", "b", "c", "d"].map((k) => (
+                  <div key={k} className="flex gap-4">
+                    <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="h-6 w-32 rounded-full" />
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-4 w-28" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table data-ocid="fees.concessions.table">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Percentage</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {(concessionsQuery.data ?? []).map((c, i) => (
+                      <TableRow
+                        key={c.id}
+                        data-ocid={`fees.concession.item.${i + 1}`}
+                      >
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className="text-xs bg-primary/10 text-primary border-primary/30"
+                          >
+                            {c.name}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-semibold">
+                          {c.percentage}%
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>
@@ -487,9 +516,11 @@ export default function FeesPage() {
             </Button>
             <Button
               onClick={confirmPayment}
+              disabled={payMutation.isPending}
               data-ocid="fees.record_payment.confirm_button"
             >
-              <CheckCircle2 className="w-4 h-4 mr-2" /> Confirm Payment
+              <CheckCircle2 className="w-4 h-4 mr-2" />
+              {payMutation.isPending ? "Processing…" : "Confirm Payment"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -548,9 +579,11 @@ export default function FeesPage() {
             </Button>
             <Button
               onClick={handleOnlinePayment}
+              disabled={payMutation.isPending}
               data-ocid="fees.pay_now.confirm_button"
             >
-              <CreditCard className="w-4 h-4 mr-2" /> Pay Now
+              <CreditCard className="w-4 h-4 mr-2" />
+              {payMutation.isPending ? "Processing…" : "Pay Now"}
             </Button>
           </DialogFooter>
         </DialogContent>

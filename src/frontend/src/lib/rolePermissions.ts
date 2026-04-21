@@ -8,7 +8,9 @@ export const roleLabels: Record<string, string> = {
   clerk: "Clerk",
 };
 
-// Paths each role can access (admin gets all)
+// Paths each role can access in the school-side layout
+// Note: admin (platform admin) gets school-side paths below for backwards compatibility,
+// but platform admin routes (/platform-admin/*) are handled separately via PlatformAdminLayout
 export const roleNavPaths: Record<string, string[]> = {
   admin: [
     "/dashboard",
@@ -28,6 +30,7 @@ export const roleNavPaths: Record<string, string[]> = {
     "/admin",
     "/settings",
     "/principal",
+    "/tenant-management",
   ],
   principal: [
     "/dashboard",
@@ -59,6 +62,15 @@ export const roleNavPaths: Record<string, string[]> = {
   ],
   clerk: ["/dashboard", "/notifications", "/admissions"],
 };
+
+// Platform admin nav paths — used by PlatformAdminLayout
+export const platformAdminNavPaths = [
+  "/platform-admin",
+  "/platform-admin/tenants",
+  "/platform-admin/subscriptions",
+  "/platform-admin/reminders",
+  "/platform-admin/reminder-log",
+];
 
 // Which roles each role can create
 export const creatableRoles: Record<string, string[]> = {

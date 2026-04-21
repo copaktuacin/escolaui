@@ -1,6 +1,23 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
   Table,
   TableBody,
   TableCell,
@@ -10,13 +27,23 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { api } from "@/lib/api";
+import { isDemoMode } from "@/lib/demoMode";
+import { getSessions, updateSession } from "@/lib/onlineClassesStore";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
   Camera,
-  Download,
   ExternalLink,
   Mic,
   MicOff,
   MonitorPlay,
   Play,
+  PlusCircle,
   Square,
   Users,
   Video,
@@ -25,156 +52,154 @@ import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-
-type VirtualSession = {
+type OnlineSession = {
   id: string;
+  title: string;
   subject: string;
-  teacher: string;
-  day: string;
-  time: string;
-  duration: string;
-  participants: number;
+  teacher?: string;
+  day?: string;
+  time?: string;
+  duration?: string;
+  joinUrl?: string;
+  joinLink?: string;
+  scheduledAt?: string;
   status: "live" | "scheduled" | "ended";
-  joinLink: string;
+  recordingUrl?: string;
+  participants?: number;
 };
 
-type Recording = {
-  id: string;
-  subject: string;
-  teacher: string;
-  date: string;
-  duration: string;
-  size: string;
-};
+const DAYS_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
-const mockSessions: VirtualSession[] = [
-  {
-    id: "s1",
-    subject: "Mathematics",
-    teacher: "Mr. Adebayo",
-    day: "Monday",
-    time: "8:00 AM",
-    duration: "60 min",
-    participants: 28,
-    status: "live",
-    joinLink: "#",
-  },
-  {
-    id: "s2",
-    subject: "English Literature",
-    teacher: "Mrs. Okafor",
-    day: "Monday",
-    time: "10:00 AM",
-    duration: "60 min",
-    participants: 31,
-    status: "scheduled",
-    joinLink: "#",
-  },
-  {
-    id: "s3",
-    subject: "Physics",
-    teacher: "Dr. Nwosu",
-    day: "Tuesday",
-    time: "9:00 AM",
-    duration: "90 min",
-    participants: 24,
-    status: "scheduled",
-    joinLink: "#",
-  },
-  {
-    id: "s4",
-    subject: "Chemistry",
-    teacher: "Ms. Eze",
-    day: "Wednesday",
-    time: "11:00 AM",
-    duration: "60 min",
-    participants: 27,
-    status: "scheduled",
-    joinLink: "#",
-  },
-  {
-    id: "s5",
-    subject: "Biology",
-    teacher: "Mr. Chukwu",
-    day: "Thursday",
-    time: "2:00 PM",
-    duration: "60 min",
-    participants: 30,
-    status: "scheduled",
-    joinLink: "#",
-  },
-  {
-    id: "s6",
-    subject: "History",
-    teacher: "Mrs. Bello",
-    day: "Friday",
-    time: "9:00 AM",
-    duration: "45 min",
-    participants: 26,
-    status: "scheduled",
-    joinLink: "#",
-  },
-];
-
-const mockRecordings: Recording[] = [
-  {
-    id: "r1",
-    subject: "Mathematics – Quadratics",
-    teacher: "Mr. Adebayo",
-    date: "2026-03-25",
-    duration: "58 min",
-    size: "420 MB",
-  },
-  {
-    id: "r2",
-    subject: "English – Poetry Analysis",
-    teacher: "Mrs. Okafor",
-    date: "2026-03-24",
-    duration: "62 min",
-    size: "510 MB",
-  },
-  {
-    id: "r3",
-    subject: "Physics – Newton's Laws",
-    teacher: "Dr. Nwosu",
-    date: "2026-03-22",
-    duration: "88 min",
-    size: "730 MB",
-  },
-  {
-    id: "r4",
-    subject: "Chemistry – Organic Reactions",
-    teacher: "Ms. Eze",
-    date: "2026-03-20",
-    duration: "55 min",
-    size: "390 MB",
-  },
-  {
-    id: "r5",
-    subject: "Biology – Cell Division",
-    teacher: "Mr. Chukwu",
-    date: "2026-03-18",
-    duration: "60 min",
-    size: "480 MB",
-  },
-];
-
-const statusBadge: Record<VirtualSession["status"], string> = {
+const statusBadge: Record<OnlineSession["status"], string> = {
   live: "bg-success/10 text-success border-success/30",
   scheduled: "bg-primary/10 text-primary border-primary/30",
   ended: "bg-muted text-muted-foreground border-border",
 };
 
+const EMPTY_FORM = {
+  subject: "",
+  title: "",
+  day: "Monday",
+  time: "",
+  duration: "",
+  joinUrl: "",
+};
+
+function useOnlineSessions() {
+  return useQuery<OnlineSession[]>({
+    queryKey: ["online-classes"],
+    queryFn: async () => {
+      if (isDemoMode()) {
+        const sessions = getSessions();
+        return sessions.map((s) => ({
+          ...s,
+          title: s.subject,
+          joinUrl: s.joinLink,
+        }));
+      }
+      const res = await api.get<OnlineSession[]>("/online-classes");
+      if (!res.success) throw new Error(res.error ?? "Failed to load sessions");
+      return res.data ?? [];
+    },
+  });
+}
+
 export default function OnlineClassesPage() {
+  const qc = useQueryClient();
+  const { data: sessions = [], isLoading } = useOnlineSessions();
   const [sessionActive, setSessionActive] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [participants] = useState(18);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
 
-  const byDay = DAYS.map((day) => ({
+  const byDay = DAYS_FULL.map((day) => ({
     day,
-    sessions: mockSessions.filter((s) => s.day === day),
+    sessions: sessions.filter(
+      (s) => s.day === day || s.day?.toLowerCase() === day.toLowerCase(),
+    ),
   }));
+
+  const createMutation = useMutation({
+    mutationFn: async (data: typeof EMPTY_FORM) => {
+      if (isDemoMode()) {
+        return {
+          id: `demo-${Date.now()}`,
+          ...data,
+          status: "scheduled" as const,
+        };
+      }
+      const res = await api.post<OnlineSession>("/online-classes", {
+        title: data.subject,
+        subject: data.subject,
+        day: data.day,
+        time: data.time,
+        duration: data.duration,
+        joinUrl: data.joinUrl,
+        status: "scheduled",
+      });
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to create session");
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["online-classes"] });
+      toast.success("Session created");
+      setAddOpen(false);
+      setForm(EMPTY_FORM);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: { id: string; data: Partial<OnlineSession> }) => {
+      if (isDemoMode()) {
+        updateSession(id, { status: data.status, joinLink: data.joinUrl });
+        return;
+      }
+      const res = await api.put<OnlineSession>(`/online-classes/${id}`, data);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update session");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["online-classes"] });
+      toast.success("Session updated");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const _deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      if (isDemoMode()) return;
+      const res = await api.delete(`/online-classes/${id}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to delete session");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["online-classes"] });
+      toast.info("Session removed");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function handleJoin(s: OnlineSession) {
+    const url = s.joinUrl ?? s.joinLink;
+    if (!url) {
+      toast.error("No meeting link has been set for this class yet.");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function handleAddSession() {
+    if (!form.subject.trim()) {
+      toast.error("Subject is required");
+      return;
+    }
+    createMutation.mutate(form);
+  }
 
   return (
     <motion.div
@@ -183,12 +208,126 @@ export default function OnlineClassesPage() {
       transition={{ duration: 0.35 }}
       className="space-y-6"
     >
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Online Classes</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Manage virtual sessions, recordings, and teacher controls
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">Online Classes</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Manage virtual sessions, recordings, and teacher controls
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className="gap-2"
+          onClick={() => setAddOpen(true)}
+          data-ocid="online_classes.add.open_modal_button"
+        >
+          <PlusCircle className="w-4 h-4" /> Add Session
+        </Button>
       </div>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent
+          className="sm:max-w-md"
+          data-ocid="online_classes.add.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle>New Online Session</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Subject *</Label>
+                <Input
+                  value={form.subject}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, subject: e.target.value }))
+                  }
+                  placeholder="e.g. Mathematics"
+                  className="h-8 text-xs"
+                  data-ocid="online_classes.subject.input"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Day</Label>
+                <Select
+                  value={form.day}
+                  onValueChange={(v) => setForm((f) => ({ ...f, day: v }))}
+                >
+                  <SelectTrigger
+                    className="h-8 text-xs"
+                    data-ocid="online_classes.day.select"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DAYS_FULL.map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Time</Label>
+                <Input
+                  value={form.time}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, time: e.target.value }))
+                  }
+                  placeholder="8:00 AM"
+                  className="h-8 text-xs"
+                  data-ocid="online_classes.time.input"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Duration</Label>
+                <Input
+                  value={form.duration}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, duration: e.target.value }))
+                  }
+                  placeholder="60 min"
+                  className="h-8 text-xs"
+                  data-ocid="online_classes.duration.input"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Meeting URL (optional)</Label>
+              <Input
+                value={form.joinUrl}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, joinUrl: e.target.value }))
+                }
+                placeholder="https://zoom.us/j/..."
+                className="h-8 text-xs"
+                data-ocid="online_classes.joinurl.input"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAddOpen(false)}
+              data-ocid="online_classes.add.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAddSession}
+              disabled={createMutation.isPending}
+              data-ocid="online_classes.add.confirm_button"
+            >
+              {createMutation.isPending ? "Creating..." : "Create Session"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs defaultValue="schedule">
         <TabsList data-ocid="online_classes.tab">
@@ -197,72 +336,123 @@ export default function OnlineClassesPage() {
           <TabsTrigger value="controls">Teacher Controls</TabsTrigger>
         </TabsList>
 
-        {/* Schedule Tab */}
         <TabsContent value="schedule" className="mt-6 space-y-4">
-          {byDay.map((group, gi) => (
-            <motion.div
-              key={group.day}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: gi * 0.05 }}
-              className="bg-card rounded-xl border border-border shadow-card overflow-hidden"
-            >
-              <div className="bg-muted/40 px-5 py-3 border-b border-border">
-                <h3 className="font-semibold text-sm text-foreground">
-                  {group.day}
-                </h3>
-              </div>
-              {group.sessions.length === 0 ? (
-                <p className="text-sm text-muted-foreground px-5 py-4">
-                  No sessions scheduled
-                </p>
-              ) : (
-                <div className="divide-y divide-border">
-                  {group.sessions.map((s, si) => (
-                    <div
-                      key={s.id}
-                      className="px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-3"
-                      data-ocid={`online_classes.item.${gi * 5 + si + 1}`}
-                    >
-                      <div className="flex-1">
-                        <p className="font-medium text-foreground text-sm">
-                          {s.subject}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {s.teacher} · {s.time} · {s.duration}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Users className="w-3.5 h-3.5" /> {s.participants}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={`text-xs capitalize ${statusBadge[s.status]}`}
-                        >
-                          {s.status}
-                        </Badge>
-                        <Button
-                          size="sm"
-                          variant={s.status === "live" ? "default" : "outline"}
-                          className="text-xs h-7 gap-1"
-                          onClick={() =>
-                            toast.info(`Joining ${s.subject} class...`)
-                          }
-                          data-ocid={`online_classes.join.${gi * 5 + si + 1}.button`}
-                        >
-                          <ExternalLink className="w-3 h-3" /> Join
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton
+                  key={i}
+                  className="h-24 rounded-xl"
+                  data-ocid="online_classes.loading_state"
+                />
+              ))}
+            </div>
+          ) : (
+            byDay.map((group, gi) => (
+              <motion.div
+                key={group.day}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: gi * 0.05 }}
+                className="bg-card rounded-xl border border-border shadow-card overflow-hidden"
+              >
+                <div className="bg-muted/40 px-5 py-3 border-b border-border">
+                  <h3 className="font-semibold text-sm text-foreground">
+                    {group.day}
+                  </h3>
                 </div>
-              )}
-            </motion.div>
-          ))}
+                {group.sessions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground px-5 py-4">
+                    No sessions scheduled
+                  </p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {group.sessions.map((s, si) => {
+                      const url = s.joinUrl ?? s.joinLink;
+                      const isJoinable = s.status === "live" && !!url;
+                      return (
+                        <div
+                          key={s.id}
+                          className="px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-3"
+                          data-ocid={`online_classes.item.${gi * 5 + si + 1}`}
+                        >
+                          <div className="flex-1">
+                            <p className="font-medium text-foreground text-sm">
+                              {s.subject ?? s.title}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {[s.teacher, s.time, s.duration]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {s.participants != null && (
+                              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Users className="w-3.5 h-3.5" />{" "}
+                                {s.participants}
+                              </span>
+                            )}
+                            <Badge
+                              variant="outline"
+                              className={`text-xs capitalize ${statusBadge[s.status]}`}
+                            >
+                              {s.status}
+                            </Badge>
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span>
+                                    <Button
+                                      size="sm"
+                                      variant={
+                                        isJoinable ? "default" : "outline"
+                                      }
+                                      className="text-xs h-7 gap-1"
+                                      disabled={!isJoinable}
+                                      onClick={() => handleJoin(s)}
+                                      data-ocid={`online_classes.join.${gi * 5 + si + 1}.button`}
+                                    >
+                                      <ExternalLink className="w-3 h-3" /> Join
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                {!isJoinable && (
+                                  <TooltipContent
+                                    side="top"
+                                    className="text-xs max-w-[180px] text-center"
+                                  >
+                                    {!url
+                                      ? "No meeting link set"
+                                      : "Class is not live yet"}
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+                            {s.status === "ended" && s.recordingUrl && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-xs h-7 gap-1"
+                                onClick={() =>
+                                  window.open(s.recordingUrl, "_blank")
+                                }
+                                data-ocid={`online_classes.recording.${gi * 5 + si + 1}.button`}
+                              >
+                                <Play className="w-3 h-3" /> Recording
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            ))
+          )}
         </TabsContent>
 
-        {/* Recordings Tab */}
         <TabsContent value="recordings" className="mt-6">
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
             <div className="p-5 border-b border-border">
@@ -273,76 +463,89 @@ export default function OnlineClassesPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Session</TableHead>
-                    <TableHead className="hidden md:table-cell">
-                      Teacher
-                    </TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead className="hidden sm:table-cell">Size</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Day</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Recording</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockRecordings.map((rec, i) => (
-                    <TableRow
-                      key={rec.id}
-                      data-ocid={`online_classes.recording.item.${i + 1}`}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                            <MonitorPlay className="w-4 h-4 text-primary" />
-                          </div>
-                          <span className="font-medium text-sm">
-                            {rec.subject}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground text-sm">
-                        {rec.teacher}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {rec.date}
-                      </TableCell>
-                      <TableCell className="text-sm">{rec.duration}</TableCell>
-                      <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
-                        {rec.size}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 w-7 p-0"
-                            onClick={() => toast.info(`Playing ${rec.subject}`)}
-                            data-ocid={`online_classes.play.${i + 1}.button`}
-                          >
-                            <Play className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 w-7 p-0"
-                            onClick={() =>
-                              toast.success(
-                                `Downloading ${rec.subject} recording`,
-                              )
-                            }
-                            data-ocid={`online_classes.download.${i + 1}.button`}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
+                  {isLoading ? (
+                    (["a", "b", "c"] as const).map((k) => (
+                      <TableRow key={`skel-${k}`}>
+                        <TableCell colSpan={4}>
+                          <Skeleton className="h-8" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : sessions.filter((s) => s.status === "ended").length ===
+                    0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={4}
+                        className="text-center text-muted-foreground py-8"
+                        data-ocid="online_classes.recordings.empty_state"
+                      >
+                        <MonitorPlay className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="text-sm">No recordings available</p>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    sessions
+                      .filter((s) => s.status === "ended")
+                      .map((s, i) => (
+                        <TableRow
+                          key={s.id}
+                          data-ocid={`online_classes.recording.item.${i + 1}`}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                <MonitorPlay className="w-4 h-4 text-primary" />
+                              </div>
+                              <span className="font-medium text-sm">
+                                {s.subject ?? s.title}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {s.day ?? "–"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${statusBadge[s.status]}`}
+                            >
+                              {s.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {s.recordingUrl ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 gap-1 text-xs"
+                                onClick={() =>
+                                  window.open(s.recordingUrl, "_blank")
+                                }
+                                data-ocid={`online_classes.play.${i + 1}.button`}
+                              >
+                                <Play className="w-3.5 h-3.5" /> Play
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                No recording
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                  )}
                 </TableBody>
               </Table>
             </div>
           </div>
         </TabsContent>
 
-        {/* Teacher Controls Tab */}
         <TabsContent value="controls" className="mt-6">
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="bg-card rounded-xl border border-border shadow-card p-6 space-y-5">
@@ -362,17 +565,7 @@ export default function OnlineClassesPage() {
                   <p className="text-sm font-medium">
                     {sessionActive ? "Session Active" : "No Active Session"}
                   </p>
-                  {sessionActive && (
-                    <p className="text-xs text-muted-foreground">
-                      {participants} participants connected
-                    </p>
-                  )}
                 </div>
-                {sessionActive && (
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Users className="w-3.5 h-3.5" /> {participants}
-                  </div>
-                )}
               </div>
               <div className="flex flex-wrap gap-3">
                 {!sessionActive ? (
@@ -380,7 +573,7 @@ export default function OnlineClassesPage() {
                     className="gap-2"
                     onClick={() => {
                       setSessionActive(true);
-                      toast.success("Session started successfully");
+                      toast.success("Session started");
                     }}
                     data-ocid="online_classes.start_session.button"
                   >
@@ -404,11 +597,7 @@ export default function OnlineClassesPage() {
                   className="gap-2"
                   onClick={() => {
                     setMuted((m) => !m);
-                    toast.info(
-                      muted
-                        ? "All participants unmuted"
-                        : "All participants muted",
-                    );
+                    toast.info(muted ? "Unmuted all" : "Muted all");
                   }}
                   data-ocid="online_classes.mute_all.button"
                 >
@@ -432,29 +621,123 @@ export default function OnlineClassesPage() {
 
             <div className="bg-card rounded-xl border border-border shadow-card p-6">
               <h2 className="font-semibold text-foreground mb-4">
-                Upcoming Sessions Today
+                Live / Upcoming Sessions
               </h2>
-              <div className="space-y-3">
-                {mockSessions.slice(0, 3).map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-border"
-                  >
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{s.subject}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {s.time} · {s.duration}
-                      </p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={`text-xs ${statusBadge[s.status]}`}
+              {isLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-16 rounded-lg" />
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sessions.slice(0, 3).map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center gap-3 p-3 rounded-lg border border-border"
                     >
-                      {s.status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">
+                          {s.subject ?? s.title}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {s.time ?? s.scheduledAt ?? "–"}
+                        </p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${statusBadge[s.status]}`}
+                      >
+                        {s.status}
+                      </Badge>
+                    </div>
+                  ))}
+                  {sessions.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      No sessions
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Session management table */}
+          <div className="mt-6 bg-card rounded-xl border border-border shadow-card overflow-hidden">
+            <div className="p-5 border-b border-border">
+              <h2 className="font-semibold text-foreground">All Sessions</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <Table data-ocid="online_classes.sessions.table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Subject</TableHead>
+                    <TableHead>Day</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Change Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.length === 0 && !isLoading ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={4}
+                        className="text-center text-muted-foreground py-8"
+                        data-ocid="online_classes.sessions.empty_state"
+                      >
+                        No sessions yet
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    sessions.map((s, i) => (
+                      <TableRow
+                        key={s.id}
+                        data-ocid={`online_classes.session.item.${i + 1}`}
+                      >
+                        <TableCell className="font-medium text-sm">
+                          {s.subject ?? s.title}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {s.day ?? "–"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-xs capitalize ${statusBadge[s.status]}`}
+                          >
+                            {s.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Select
+                            value={s.status}
+                            onValueChange={(v) =>
+                              updateMutation.mutate({
+                                id: s.id,
+                                data: { status: v as OnlineSession["status"] },
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              className="h-7 text-xs w-32 ml-auto"
+                              data-ocid={`online_classes.status.${i + 1}.select`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="scheduled">
+                                Scheduled
+                              </SelectItem>
+                              <SelectItem value="live">Live</SelectItem>
+                              <SelectItem value="ended">Ended</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </div>
         </TabsContent>
