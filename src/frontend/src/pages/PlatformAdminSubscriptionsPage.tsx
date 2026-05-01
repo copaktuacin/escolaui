@@ -1,438 +1,483 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
 import {
-  AlertCircle,
-  ArrowUpDown,
-  CheckCircle2,
-  CreditCard,
-  PauseCircle,
-  Search,
-  TrendingUp,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { api } from "../lib/api";
+  type PaymentSummary,
+  type Subscription,
+  adminGetSubscriptionPlans,
+  adminGetSubscriptions,
+} from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
-import {
-  type SubscriptionStatus,
-  type Tenant,
-  demoTenantsStore,
-  withDelay,
-} from "../lib/mockData";
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// ─── Demo data ────────────────────────────────────────────────────────────────
 
-function useTenants() {
-  return useQuery<Tenant[]>({
-    queryKey: ["tenants"],
-    queryFn: async () => {
-      if (isDemoMode()) return withDelay([...demoTenantsStore]);
-      const res = await api.get<Tenant[]>("/tenants");
-      if (!res.success) throw new Error(res.error ?? "Failed to load tenants");
-      return res.data ?? [];
-    },
-  });
-}
+const MOCK_SUBS: Subscription[] = [
+  {
+    id: 1,
+    tenantId: 1,
+    schoolName: "Springfield Academy",
+    plan: "Premium",
+    status: "Active",
+    startDate: "2024-09-01T00:00:00Z",
+    nextBillingDate: "2026-05-01T00:00:00Z",
+    amount: 4900,
+    outstandingAmount: 0,
+  },
+  {
+    id: 2,
+    tenantId: 2,
+    schoolName: "Riverside Public School",
+    plan: "Standard",
+    status: "Active",
+    startDate: "2024-11-15T00:00:00Z",
+    nextBillingDate: "2026-05-15T00:00:00Z",
+    amount: 2900,
+    outstandingAmount: 0,
+  },
+  {
+    id: 3,
+    tenantId: 3,
+    schoolName: "Lakewood International",
+    plan: "Basic",
+    status: "Overdue",
+    startDate: "2025-01-10T00:00:00Z",
+    nextBillingDate: "2026-04-10T00:00:00Z",
+    amount: 900,
+    outstandingAmount: 2400,
+  },
+  {
+    id: 4,
+    tenantId: 4,
+    schoolName: "Greenhill Primary",
+    plan: "Standard",
+    status: "Active",
+    startDate: "2025-03-20T00:00:00Z",
+    nextBillingDate: "2026-06-20T00:00:00Z",
+    amount: 2900,
+    outstandingAmount: 0,
+  },
+  {
+    id: 5,
+    tenantId: 5,
+    schoolName: "Westbrook High School",
+    plan: "Premium",
+    status: "Paused",
+    startDate: "2025-04-01T00:00:00Z",
+    nextBillingDate: "2026-05-25T00:00:00Z",
+    amount: 4900,
+    outstandingAmount: 1200,
+  },
+];
+
+const MOCK_SUMMARY: PaymentSummary = {
+  totalPayments: 38,
+  totalAmount: 10700,
+  successfulPayments: 35,
+  failedPayments: 1,
+  pendingPayments: 2,
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type StatusFilter = "all" | "Active" | "Paused" | "Overdue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type SortKey =
-  | "schoolName"
-  | "subscriptionStatus"
-  | "nextPaymentDate"
-  | "amountDue";
-type SortDir = "asc" | "desc";
-
-const STATUS_FILTERS: { label: string; value: SubscriptionStatus | "all" }[] = [
-  { label: "All", value: "all" },
-  { label: "Active", value: "Active" },
-  { label: "Overdue", value: "Overdue" },
-  { label: "Due Soon", value: "DueSoon" },
-  { label: "Paused", value: "Paused" },
-];
-
-const SUBSCRIPTION_STATUS_STYLES: Record<
-  SubscriptionStatus,
-  {
-    bg: string;
-    text: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }
-> = {
-  Active: {
-    bg: "bg-green-100 dark:bg-green-900/30",
-    text: "text-green-800 dark:text-green-300",
-    icon: CheckCircle2,
-  },
-  Overdue: {
-    bg: "bg-red-100 dark:bg-red-900/30",
-    text: "text-red-800 dark:text-red-300",
-    icon: AlertCircle,
-  },
-  DueSoon: {
-    bg: "bg-yellow-100 dark:bg-yellow-900/30",
-    text: "text-yellow-800 dark:text-yellow-300",
-    icon: TrendingUp,
-  },
-  Paused: {
-    bg: "bg-secondary dark:bg-secondary",
-    text: "text-secondary-foreground",
-    icon: PauseCircle,
-  },
+const STATUS_STYLES: Record<string, string> = {
+  Active: "bg-emerald-900/30 text-emerald-400 border-emerald-700/40",
+  Paused: "bg-gray-800 text-gray-400 border-gray-700",
+  Overdue: "bg-red-900/30 text-red-400 border-red-700/40",
 };
 
-function SubscriptionStatusBadge({ status }: { status: SubscriptionStatus }) {
-  const s = SUBSCRIPTION_STATUS_STYLES[status];
+const PLAN_STYLES: Record<string, string> = {
+  Basic: "text-blue-400",
+  Standard: "text-violet-400",
+  Premium: "text-amber-400",
+};
+
+function StatusBadge({ status }: { status: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${s.bg} ${s.text}`}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${STATUS_STYLES[status] ?? STATUS_STYLES.Paused}`}
     >
-      <s.icon className="w-3 h-3" />
-      {status === "DueSoon" ? "Due Soon" : status}
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+      {status}
     </span>
   );
 }
 
-function SortButton({
-  label,
-  sortKey,
-  current,
-  onSort,
-}: {
-  label: string;
-  sortKey: SortKey;
-  current: SortKey;
-  onSort: (k: SortKey) => void;
-}) {
-  const active = current === sortKey;
+function daysUntil(dateStr: string) {
+  return Math.ceil(
+    (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+  );
+}
+
+function DaysLeft({ date }: { date: string }) {
+  const d = daysUntil(date);
+  const color = d < 0 ? "#f87171" : d < 14 ? "#fbbf24" : "#34d399";
   return (
-    <button
-      type="button"
-      onClick={() => onSort(sortKey)}
-      className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-        active ? "text-primary" : "text-muted-foreground hover:text-foreground"
-      }`}
-      data-ocid={`subscriptions.sort.${sortKey}.button`}
-    >
-      {label}
-      <ArrowUpDown className={`w-3 h-3 ${active ? "text-primary" : ""}`} />
-    </button>
+    <span className="text-xs font-semibold tabular-nums" style={{ color }}>
+      {d < 0 ? `${Math.abs(d)}d overdue` : `${d}d`}
+    </span>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminSubscriptionsPage() {
-  const { data: tenants = [], isLoading } = useTenants();
-  const [statusFilter, setStatusFilter] = useState<SubscriptionStatus | "all">(
-    "all",
-  );
+  const [subs, setSubs] = useState<Subscription[]>([]);
+  const [summary, setSummary] = useState<PaymentSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("subscriptionStatus");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
-  const filtered = useMemo(() => {
-    let result = [...tenants];
-    if (statusFilter !== "all") {
-      result = result.filter((t) => t.subscriptionStatus === statusFilter);
-    }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      result = result.filter(
-        (t) =>
-          t.schoolName.toLowerCase().includes(q) ||
-          t.adminEmail.toLowerCase().includes(q),
-      );
-    }
-    result.sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === "schoolName") {
-        cmp = a.schoolName.localeCompare(b.schoolName);
-      } else if (sortKey === "subscriptionStatus") {
-        const order: SubscriptionStatus[] = [
-          "Overdue",
-          "DueSoon",
-          "Active",
-          "Paused",
-        ];
-        cmp =
-          order.indexOf(a.subscriptionStatus) -
-          order.indexOf(b.subscriptionStatus);
-      } else if (sortKey === "nextPaymentDate") {
-        cmp =
-          new Date(a.nextPaymentDate).getTime() -
-          new Date(b.nextPaymentDate).getTime();
-      } else if (sortKey === "amountDue") {
-        cmp = a.amountDue - b.amountDue;
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (isDemoMode()) {
+        await new Promise((r) => setTimeout(r, 400));
+        setSubs(MOCK_SUBS);
+        setSummary(MOCK_SUMMARY);
+      } else {
+        const [subsRes, summaryRes] = await Promise.all([
+          adminGetSubscriptions(1, 100),
+          adminGetSubscriptionPlans(),
+        ]);
+        const d = subsRes.data as { data?: Subscription[] } | null;
+        setSubs(Array.isArray(d?.data) ? d.data : []);
+        // Payment summary: graceful 404 — show zeroed KPIs rather than crashing
+        if (summaryRes.success && summaryRes.data) {
+          setSummary(summaryRes.data);
+        } else {
+          const is404 =
+            summaryRes.error?.includes("Not Found") ||
+            summaryRes.error?.includes("404");
+          if (!is404) {
+            console.warn(
+              "[EscolaUI] Subscription plans error:",
+              summaryRes.error,
+            );
+          }
+          // Leave summary as null — KPI strip will not render
+        }
       }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return result;
-  }, [tenants, statusFilter, search, sortKey, sortDir]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Summary stats
-  const totalRevenue = tenants.reduce(
-    (s, t) => s + (t.subscriptionStatus !== "Paused" ? t.amountDue : 0),
-    0,
-  );
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const filtered = subs.filter((s) => {
+    const matchStatus = statusFilter === "all" || s.status === statusFilter;
+    const matchSearch =
+      !search.trim() ||
+      s.schoolName.toLowerCase().includes(search.toLowerCase());
+    return matchStatus && matchSearch;
+  });
+
+  const STATUS_TABS: { label: string; value: StatusFilter }[] = [
+    { label: `All (${subs.length})`, value: "all" },
+    {
+      label: `Active (${subs.filter((s) => s.status === "Active").length})`,
+      value: "Active",
+    },
+    {
+      label: `Paused (${subs.filter((s) => s.status === "Paused").length})`,
+      value: "Paused",
+    },
+    {
+      label: `Overdue (${subs.filter((s) => s.status === "Overdue").length})`,
+      value: "Overdue",
+    },
+  ];
+
+  const kpis = summary
+    ? [
+        {
+          label: "Total Payments",
+          value: (summary?.totalPayments ?? 0).toLocaleString(),
+          color: "#60a5fa",
+        },
+        {
+          label: "Total Amount",
+          value: `₹${(summary?.totalAmount ?? 0).toLocaleString()}`,
+          color: "#a78bfa",
+        },
+        {
+          label: "Successful",
+          value: (summary?.successfulPayments ?? 0).toLocaleString(),
+          color: "#34d399",
+        },
+        {
+          label: "Failed",
+          value: (summary?.failedPayments ?? 0).toLocaleString(),
+          color: "#f87171",
+        },
+        {
+          label: "Pending",
+          value: (summary?.pendingPayments ?? 0).toLocaleString(),
+          color: "#fbbf24",
+        },
+      ]
+    : [];
 
   return (
     <div className="space-y-6" data-ocid="subscriptions.page">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex items-center gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <CreditCard className="w-4 h-4 text-primary" />
-            </div>
-            <h1 className="text-xl font-bold text-foreground">
-              Subscription Management
-            </h1>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            View and monitor all tenant subscription plans and billing status
+          <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+            Subscription Management
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
+            Monitor all tenant subscription plans and billing status
           </p>
         </div>
       </div>
 
-      {/* Summary strip */}
-      {!isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {(
-            ["Active", "Overdue", "DueSoon", "Paused"] as SubscriptionStatus[]
-          ).map((s) => {
-            const count = tenants.filter(
-              (t) => t.subscriptionStatus === s,
-            ).length;
-            const style = SUBSCRIPTION_STATUS_STYLES[s];
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-                className={`p-3 rounded-xl border text-left transition-all duration-150 ${
-                  statusFilter === s
-                    ? "ring-2 ring-primary border-primary"
-                    : "border-border bg-card hover:bg-muted/40"
-                }`}
-                data-ocid={`subscriptions.filter_card.${s.toLowerCase()}`}
+      {/* KPI strip */}
+      {loading ? (
+        <div
+          className="grid grid-cols-2 sm:grid-cols-5 gap-3"
+          data-ocid="subscriptions.kpis.loading_state"
+        >
+          {[1, 2, 3, 4, 5].map((n) => (
+            <div
+              key={n}
+              className="h-20 rounded-xl animate-pulse"
+              style={{ background: "#1e293b" }}
+            />
+          ))}
+        </div>
+      ) : kpis.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {kpis.map((k) => (
+            <div
+              key={k.label}
+              className="rounded-xl p-4 border"
+              style={{ background: "#1e293b", borderColor: "#334155" }}
+            >
+              <p className="text-xs" style={{ color: "#64748b" }}>
+                {k.label}
+              </p>
+              <p
+                className="text-2xl font-bold mt-1 tabular-nums"
+                style={{ color: k.color }}
               >
-                <p className="text-xs text-muted-foreground">
-                  {s === "DueSoon" ? "Due Soon" : s}
-                </p>
-                <p className={`text-xl font-bold mt-0.5 ${style.text}`}>
-                  {count}
-                </p>
-              </button>
-            );
-          })}
+                {k.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div
+          className="rounded-xl p-4 border text-center"
+          style={{ background: "#1e293b", borderColor: "#334155" }}
+          data-ocid="subscriptions.kpis.empty_state"
+        >
+          <p className="text-sm" style={{ color: "#64748b" }}>
+            Payment data not available yet
+          </p>
         </div>
       )}
 
-      {/* Filters row */}
+      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search school name or email…"
+          <span
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-xs"
+            style={{ color: "#475569" }}
+          >
+            🔍
+          </span>
+          <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            placeholder="Search school name…"
+            className="w-full pl-8 pr-3 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
+            style={{
+              background: "#1e293b",
+              borderColor: "#334155",
+              color: "#e2e8f0",
+            }}
             data-ocid="subscriptions.search.input"
           />
         </div>
         <div className="flex gap-2 flex-wrap">
-          {STATUS_FILTERS.map((f) => (
+          {STATUS_TABS.map((tab) => (
             <button
-              key={f.value}
+              key={tab.value}
               type="button"
-              onClick={() => setStatusFilter(f.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                statusFilter === f.value
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-              data-ocid={`subscriptions.status_filter.${f.value}.tab`}
+              onClick={() => setStatusFilter(tab.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${statusFilter === tab.value ? "text-white" : "border text-gray-500 hover:text-gray-300"}`}
+              style={
+                statusFilter === tab.value
+                  ? { background: "#4f46e5" }
+                  : { background: "#1e293b", borderColor: "#334155" }
+              }
+              data-ocid={`subscriptions.status_filter.${tab.value}.tab`}
             >
-              {f.label}
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
       {/* Table */}
-      <Card className="bg-card border border-border overflow-hidden">
-        {/* Table Header */}
-        <div className="border-b border-border bg-muted/30 px-4 py-2.5 hidden md:grid grid-cols-[2fr_1.5fr_1fr_1fr_1.2fr_1.2fr] gap-4 items-center">
-          <SortButton
-            label="School Name"
-            sortKey="schoolName"
-            current={sortKey}
-            onSort={handleSort}
-          />
-          <span className="text-xs font-medium text-muted-foreground">
-            Admin Email
-          </span>
-          <span className="text-xs font-medium text-muted-foreground">
-            Plan
-          </span>
-          <SortButton
-            label="Amount Due"
-            sortKey="amountDue"
-            current={sortKey}
-            onSort={handleSort}
-          />
-          <SortButton
-            label="Next Payment"
-            sortKey="nextPaymentDate"
-            current={sortKey}
-            onSort={handleSort}
-          />
-          <SortButton
-            label="Status"
-            sortKey="subscriptionStatus"
-            current={sortKey}
-            onSort={handleSort}
-          />
+      <div
+        className="rounded-2xl border overflow-hidden"
+        style={{ background: "#1a2234", borderColor: "#1e293b" }}
+      >
+        {/* Table header */}
+        <div
+          className="hidden md:grid gap-4 px-5 py-3 border-b text-xs font-semibold uppercase tracking-wide"
+          style={{
+            borderColor: "#1e293b",
+            color: "#475569",
+            gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 1.2fr",
+          }}
+        >
+          <span>School</span>
+          <span>Plan</span>
+          <span>Amount</span>
+          <span>Next Billing</span>
+          <span>Days Left</span>
+          <span>Status</span>
         </div>
 
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div
-              className="divide-y divide-border"
-              data-ocid="subscriptions.loading_state"
-            >
-              {[1, 2, 3, 4, 5].map((n) => (
-                <div key={n} className="px-4 py-3 flex gap-4">
-                  <Skeleton className="h-8 w-8 rounded-lg flex-shrink-0" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-40" />
-                    <Skeleton className="h-3 w-32" />
-                  </div>
-                  <Skeleton className="h-6 w-20 rounded-full" />
-                </div>
-              ))}
-            </div>
-          ) : filtered.length === 0 ? (
-            <div
-              className="flex flex-col items-center justify-center py-16 text-center"
-              data-ocid="subscriptions.empty_state"
-            >
-              <CreditCard className="w-10 h-10 text-muted-foreground/30 mb-3" />
-              <p className="text-sm font-medium text-foreground">
-                No tenants match your filters
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Try adjusting your search or status filter.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={() => {
-                  setStatusFilter("all");
-                  setSearch("");
-                }}
-                data-ocid="subscriptions.clear_filters.button"
+        {loading ? (
+          <div data-ocid="subscriptions.loading_state">
+            {[1, 2, 3, 4].map((n) => (
+              <div
+                key={n}
+                className="flex items-center gap-4 px-5 py-4 border-b"
+                style={{ borderColor: "#1e293b" }}
               >
-                Clear filters
-              </Button>
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {filtered.map((tenant, i) => (
                 <div
-                  key={tenant.id}
-                  className="px-4 py-3 grid grid-cols-1 md:grid-cols-[2fr_1.5fr_1fr_1fr_1.2fr_1.2fr] gap-2 md:gap-4 items-center hover:bg-muted/20 transition-colors"
-                  data-ocid={`subscriptions.row.item.${i + 1}`}
-                >
-                  {/* School */}
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
-                      style={{ backgroundColor: tenant.primaryColor }}
-                    >
-                      {tenant.schoolName
-                        .split(" ")
-                        .map((w) => w[0])
-                        .slice(0, 2)
-                        .join("")}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">
-                        {tenant.schoolName}
-                      </p>
-                      <p className="text-xs text-muted-foreground md:hidden truncate">
-                        {tenant.adminEmail}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Email */}
-                  <p className="text-xs text-muted-foreground truncate hidden md:block">
-                    {tenant.adminEmail}
-                  </p>
-
-                  {/* Plan */}
-                  <div className="flex items-center gap-1.5">
-                    <Badge
-                      variant="secondary"
-                      className="text-[11px] capitalize"
-                    >
-                      {tenant.plan}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground capitalize hidden lg:inline">
-                      · {tenant.billingCycle}
-                    </span>
-                  </div>
-
-                  {/* Amount */}
-                  <p className="text-sm font-semibold text-foreground tabular-nums">
-                    ${tenant.amountDue.toLocaleString()}
-                  </p>
-
-                  {/* Next Payment */}
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(tenant.nextPaymentDate).toLocaleDateString(
-                      "en-US",
-                      {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      },
-                    )}
-                  </p>
-
-                  {/* Status */}
-                  <SubscriptionStatusBadge status={tenant.subscriptionStatus} />
+                  className="w-8 h-8 rounded-lg animate-pulse"
+                  style={{ background: "#1e293b" }}
+                />
+                <div className="flex-1 space-y-1.5">
+                  <div
+                    className="h-3.5 w-36 rounded animate-pulse"
+                    style={{ background: "#1e293b" }}
+                  />
+                  <div
+                    className="h-3 w-24 rounded animate-pulse"
+                    style={{ background: "#1e293b" }}
+                  />
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <div
+                  className="h-5 w-16 rounded-full animate-pulse"
+                  style={{ background: "#1e293b" }}
+                />
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div
+            className="flex flex-col items-center py-16 text-center"
+            data-ocid="subscriptions.empty_state"
+          >
+            <p className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
+              No subscriptions match your filters
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("all");
+                setSearch("");
+              }}
+              className="mt-4 px-4 py-2 rounded-lg text-sm border"
+              style={{
+                background: "#1e293b",
+                borderColor: "#334155",
+                color: "#94a3b8",
+              }}
+              data-ocid="subscriptions.clear_filters.button"
+            >
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          <div>
+            {filtered.map((sub, i) => (
+              <div
+                key={sub.id}
+                className="px-5 py-3.5 border-b transition-colors hover:bg-white/[0.02] grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_1.2fr_1fr_1.2fr] gap-2 md:gap-4 items-center"
+                style={{ borderColor: "#1e293b" }}
+                data-ocid={`subscriptions.row.item.${i + 1}`}
+              >
+                {/* School */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
+                    style={{
+                      background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                    }}
+                  >
+                    {sub.schoolName
+                      .split(" ")
+                      .map((w) => w[0])
+                      .slice(0, 2)
+                      .join("")}
+                  </div>
+                  <p
+                    className="text-sm font-semibold truncate"
+                    style={{ color: "#e2e8f0" }}
+                  >
+                    {sub.schoolName}
+                  </p>
+                </div>
+                {/* Plan */}
+                <span
+                  className={`text-xs font-semibold ${PLAN_STYLES[sub.plan] ?? "text-gray-400"}`}
+                >
+                  {sub.plan}
+                </span>
+                {/* Amount */}
+                <p
+                  className="text-sm font-bold tabular-nums"
+                  style={{ color: "#f1f5f9" }}
+                >
+                  ₹{sub.amount.toLocaleString()}
+                </p>
+                {/* Next billing */}
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  {new Date(sub.nextBillingDate).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+                {/* Days */}
+                <DaysLeft date={sub.nextBillingDate} />
+                {/* Status */}
+                <StatusBadge status={sub.status} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-      {/* Footer summary */}
-      {!isLoading && filtered.length > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground px-1">
+      {!loading && filtered.length > 0 && (
+        <div
+          className="flex items-center justify-between text-xs px-1"
+          style={{ color: "#475569" }}
+        >
           <span>
             {filtered.length} tenant{filtered.length !== 1 ? "s" : ""} shown
           </span>
-          <span className="font-semibold text-foreground">
-            Total pending: ${totalRevenue.toLocaleString()}
-          </span>
+          {summary && (
+            <span>
+              Pending:{" "}
+              <strong style={{ color: "#fbbf24" }}>
+                {summary?.pendingPayments ?? 0} payment
+                {(summary?.pendingPayments ?? 0) !== 1 ? "s" : ""}
+              </strong>
+            </span>
+          )}
         </div>
       )}
     </div>

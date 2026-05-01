@@ -11,12 +11,14 @@ import {
 import Layout from "./components/Layout";
 import PlatformAdminLayout from "./components/PlatformAdminLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { AuthProvider } from "./contexts/AuthContext";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { SchoolProfileProvider } from "./contexts/SchoolProfileContext";
 import AdminPage from "./pages/AdminPage";
 import AdmissionsPage from "./pages/AdmissionsPage";
 import AttendancePage from "./pages/AttendancePage";
+import BulkImportPage from "./pages/BulkImportPage";
 import DashboardPage from "./pages/DashboardPage";
+import ExamsPage from "./pages/ExamsPage";
 import FeesPage from "./pages/FeesPage";
 import HRPayrollPage from "./pages/HRPayrollPage";
 import IDCardPage from "./pages/IDCardPage";
@@ -25,18 +27,21 @@ import NewApplicationPage from "./pages/NewApplicationPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import OnlineClassesPage from "./pages/OnlineClassesPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
+import PlatformAdminAddSchoolPage from "./pages/PlatformAdminAddSchoolPage";
 import PlatformAdminDashboardPage from "./pages/PlatformAdminDashboardPage";
 import PlatformAdminReminderLogPage from "./pages/PlatformAdminReminderLogPage";
 import PlatformAdminRemindersPage from "./pages/PlatformAdminRemindersPage";
+import PlatformAdminSchoolDetailPage from "./pages/PlatformAdminSchoolDetailPage";
 import PlatformAdminSettingsPage from "./pages/PlatformAdminSettingsPage";
 import PlatformAdminSubscriptionsPage from "./pages/PlatformAdminSubscriptionsPage";
 import PlatformAdminTenantsPage from "./pages/PlatformAdminTenantsPage";
 import PrincipalPage from "./pages/PrincipalPage";
+import ProfilePage from "./pages/ProfilePage";
 import ReportCardPage from "./pages/ReportCardPage";
 import SchedulePage from "./pages/SchedulePage";
 import StudentsPage from "./pages/StudentsPage";
 import TeacherPage from "./pages/TeacherPage";
-import TenantManagementPage from "./pages/TenantManagementPage";
+import TeachersPage from "./pages/TeachersPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -82,8 +87,9 @@ function PlatformProtected({ children }: { children: React.ReactNode }) {
   );
 }
 
-const ALL_ROLES = [
-  "admin",
+// School-side roles — platform admin is NOT in this list.
+// Principal is the school admin and has the broadest school access.
+const SCHOOL_ROLES = [
   "principal",
   "teacher",
   "account_officer",
@@ -122,7 +128,7 @@ const platformAdminDashboardRoute = createRoute({
 
 const platformAdminTenantsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/platform-admin/tenants",
+  path: "/platform-admin/schools",
   component: () => (
     <PlatformProtected>
       <PlatformAdminTenantsPage />
@@ -170,200 +176,244 @@ const platformAdminSettingsRoute = createRoute({
   ),
 });
 
+const platformAdminAddSchoolRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/platform-admin/schools/new",
+  component: () => (
+    <PlatformProtected>
+      <PlatformAdminAddSchoolPage />
+    </PlatformProtected>
+  ),
+});
+
+const platformAdminSchoolDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/platform-admin/schools/$id",
+  component: () => (
+    <PlatformProtected>
+      <PlatformAdminSchoolDetailPage />
+    </PlatformProtected>
+  ),
+});
+
 // ─── School-Side Routes ──────────────────────────────────────────────────────
+// Platform admin is EXCLUDED from all school-side routes.
+// ProtectedRoute will redirect isPlatformAdmin users to /platform-admin.
 
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dashboard",
   component: () => (
-    <Protected allowedRoles={ALL_ROLES}>
+    <Protected allowedRoles={SCHOOL_ROLES}>
       <DashboardPage />
     </Protected>
   ),
 });
+
 const admissionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admissions",
   component: () => (
-    <Protected
-      allowedRoles={["admin", "principal", "admission_officer", "clerk"]}
-    >
+    <Protected allowedRoles={["principal", "admission_officer", "clerk"]}>
       <AdmissionsPage />
     </Protected>
   ),
 });
+
 const newApplicationRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admissions/new",
   component: () => (
-    <Protected allowedRoles={["admin", "admission_officer"]}>
+    <Protected allowedRoles={["principal", "admission_officer"]}>
       <NewApplicationPage />
     </Protected>
   ),
 });
+
 const studentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/students",
   component: () => (
-    <Protected allowedRoles={["admin", "principal", "admission_officer"]}>
+    <Protected allowedRoles={["principal", "admission_officer"]}>
       <StudentsPage />
     </Protected>
   ),
 });
-const teachersRoute = createRoute({
+
+const bulkImportRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/teachers",
+  path: "/students/bulk-import",
   component: () => (
-    <Protected allowedRoles={["admin", "principal"]}>
-      <PlaceholderPage
-        title="Teachers"
-        description="View teacher profiles, assignments, and performance."
-      />
-    </Protected>
-  ),
-});
-const attendanceRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/attendance",
-  component: () => (
-    <Protected allowedRoles={["admin", "principal", "teacher"]}>
-      <AttendancePage />
-    </Protected>
-  ),
-});
-const feesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/fees",
-  component: () => (
-    <Protected allowedRoles={["admin", "account_officer", "accountant"]}>
-      <FeesPage />
-    </Protected>
-  ),
-});
-const scheduleRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/schedule",
-  component: () => (
-    <Protected allowedRoles={["admin", "principal", "teacher"]}>
-      <SchedulePage />
-    </Protected>
-  ),
-});
-const onlineClassesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/online-classes",
-  component: () => (
-    <Protected allowedRoles={["admin", "teacher"]}>
-      <OnlineClassesPage />
-    </Protected>
-  ),
-});
-const idCardsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/id-cards",
-  component: () => (
-    <Protected allowedRoles={["admin"]}>
-      <IDCardPage />
-    </Protected>
-  ),
-});
-const reportCardsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/report-cards",
-  component: () => (
-    <Protected allowedRoles={["admin", "teacher"]}>
-      <ReportCardPage />
-    </Protected>
-  ),
-});
-const notificationsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/notifications",
-  component: () => (
-    <Protected allowedRoles={ALL_ROLES}>
-      <NotificationsPage />
-    </Protected>
-  ),
-});
-const adminRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/admin",
-  component: () => (
-    <Protected allowedRoles={["admin"]}>
-      <AdminPage />
-    </Protected>
-  ),
-});
-const teacherRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/teacher",
-  component: () => (
-    <Protected allowedRoles={["admin", "teacher"]}>
-      <TeacherPage />
-    </Protected>
-  ),
-});
-const hrPayrollRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/hr-payroll",
-  component: () => (
-    <Protected allowedRoles={["admin", "account_officer", "accountant"]}>
-      <HRPayrollPage />
-    </Protected>
-  ),
-});
-const principalRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/principal",
-  component: () => (
-    <Protected allowedRoles={["admin", "principal"]}>
-      <PrincipalPage />
-    </Protected>
-  ),
-});
-const tenantManagementRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/tenant-management",
-  component: () => (
-    <Protected allowedRoles={["admin"]}>
-      <TenantManagementPage />
+    <Protected allowedRoles={["principal", "admission_officer"]}>
+      <BulkImportPage />
     </Protected>
   ),
 });
 
-// Legacy aliases
-const examsRoute = createRoute({
+const teachersRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/exams",
+  path: "/teachers",
   component: () => (
-    <Protected allowedRoles={["admin", "teacher"]}>
+    <Protected allowedRoles={["principal"]}>
+      <TeachersPage />
+    </Protected>
+  ),
+});
+
+const attendanceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/attendance",
+  component: () => (
+    <Protected allowedRoles={["principal", "teacher"]}>
+      <AttendancePage />
+    </Protected>
+  ),
+});
+
+const feesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/fees",
+  component: () => (
+    <Protected allowedRoles={["principal", "account_officer", "accountant"]}>
+      <FeesPage />
+    </Protected>
+  ),
+});
+
+const scheduleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/schedule",
+  component: () => (
+    <Protected allowedRoles={["principal", "teacher"]}>
+      <SchedulePage />
+    </Protected>
+  ),
+});
+
+const onlineClassesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/online-classes",
+  component: () => (
+    <Protected allowedRoles={["principal", "teacher"]}>
+      <OnlineClassesPage />
+    </Protected>
+  ),
+});
+
+const idCardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/id-cards",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <IDCardPage />
+    </Protected>
+  ),
+});
+
+const reportCardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/report-cards",
+  component: () => (
+    <Protected allowedRoles={["principal", "teacher"]}>
       <ReportCardPage />
     </Protected>
   ),
 });
-const staffRoute = createRoute({
+
+const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/staff",
+  path: "/notifications",
   component: () => (
-    <Protected allowedRoles={["admin", "account_officer", "accountant"]}>
-      <HRPayrollPage />
+    <Protected
+      allowedRoles={[
+        "principal",
+        "teacher",
+        "admission_officer",
+        "account_officer",
+        "accountant",
+        "clerk",
+      ]}
+    >
+      <NotificationsPage />
     </Protected>
   ),
 });
-const settingsRoute = createRoute({
+
+const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/settings",
+  path: "/admin",
   component: () => (
-    <Protected allowedRoles={["admin"]}>
+    <Protected allowedRoles={["principal"]}>
       <AdminPage />
     </Protected>
   ),
 });
+
+const teacherRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/teacher",
+  component: () => (
+    <Protected allowedRoles={["teacher"]}>
+      <TeacherPage />
+    </Protected>
+  ),
+});
+
+const hrPayrollRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/hr-payroll",
+  component: () => (
+    <Protected allowedRoles={["principal", "account_officer", "accountant"]}>
+      <HRPayrollPage />
+    </Protected>
+  ),
+});
+
+const principalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/principal",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <PrincipalPage />
+    </Protected>
+  ),
+});
+
+const examsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/exams",
+  component: () => (
+    <Protected allowedRoles={["principal", "teacher"]}>
+      <ExamsPage />
+    </Protected>
+  ),
+});
+
+const staffRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/staff",
+  component: () => (
+    <Protected allowedRoles={["principal", "account_officer", "accountant"]}>
+      <HRPayrollPage />
+    </Protected>
+  ),
+});
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <AdminPage />
+    </Protected>
+  ),
+});
+
 const reportsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reports",
   component: () => (
-    <Protected allowedRoles={["admin", "principal"]}>
+    <Protected allowedRoles={["principal"]}>
       <PlaceholderPage
         title="Reports & Analytics"
         description="Generate comprehensive reports and view school analytics."
@@ -372,21 +422,50 @@ const reportsRoute = createRoute({
   ),
 });
 
+// Profile route — accessible by ALL authenticated users (school + platform admin).
+// Uses PlatformAdminLayout for superadmin, school Layout for everyone else.
+function ProfileRouteComponent() {
+  const { user } = useAuth();
+  if (user?.isPlatformAdmin) {
+    return (
+      <ProtectedRoute requirePlatformAdmin>
+        <PlatformAdminLayout>
+          <ProfilePage />
+        </PlatformAdminLayout>
+      </ProtectedRoute>
+    );
+  }
+  return (
+    <Protected allowedRoles={SCHOOL_ROLES}>
+      <ProfilePage />
+    </Protected>
+  );
+}
+
+const profileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/profile",
+  component: ProfileRouteComponent,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   indexRoute,
   // Platform admin routes
   platformAdminDashboardRoute,
   platformAdminTenantsRoute,
+  platformAdminAddSchoolRoute,
+  platformAdminSchoolDetailRoute,
   platformAdminSubscriptionsRoute,
   platformAdminRemindersRoute,
   platformAdminReminderLogRoute,
   platformAdminSettingsRoute,
-  // School-side routes
+  // School-side routes (no tenant-management — removed, belongs in platform admin)
   dashboardRoute,
   admissionsRoute,
   newApplicationRoute,
   studentsRoute,
+  bulkImportRoute,
   teachersRoute,
   attendanceRoute,
   feesRoute,
@@ -399,11 +478,11 @@ const routeTree = rootRoute.addChildren([
   teacherRoute,
   hrPayrollRoute,
   principalRoute,
-  tenantManagementRoute,
   examsRoute,
   staffRoute,
   settingsRoute,
   reportsRoute,
+  profileRoute,
 ]);
 
 const router = createRouter({ routeTree });

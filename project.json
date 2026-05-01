@@ -1,24 +1,27 @@
 {
-  "overview": "EscolaUI is a multi-tenant school management system with a separate platform admin panel and school-side panel. The platform admin manages tenant subscriptions, sends bulk payment reminders with in-app notifications to school admins, and views an audit log of all reminders sent.",
+  "overview": "EscolaUI is a modular, multi-tenant school management system built with React, TypeScript, and Tailwind CSS. It connects to a live .NET 9 backend API and supports 16 modules including Students, Teachers, Admissions, Attendance, Fees, Schedule, Exams, Online Classes, Report Cards, ID Cards, HR & Payroll, Notifications, and a dedicated Platform Admin panel. Features per-school color branding, role-based access, and full demo mode.",
   "features": [
-    "Separate platform admin and school admin panels with distinct layouts and navigation",
-    "Subscription panel showing all tenants' billing status, plan, and payment dates",
-    "Bulk payment reminders with select-all or select-specific tenants",
-    "In-app notifications delivered to tenant admins when reminders are sent",
-    "Immutable reminder log with timestamp, recipient, message, and delivery status",
-    "16 school management modules: Admissions, Attendance, Fees, Students, Exams, Online Classes, ID Cards, Report Cards, Notifications, Teacher, HR & Payroll, and more",
-    "Role-based access control with per-role sidebar and route-level enforcement",
-    "Multi-tenant support with per-school branding and color themes",
-    "Demo mode for evaluation without backend connectivity"
+    "Login with plain HTML form (no component library), JWT auth with auto-refresh",
+    "16 school management modules all wired to live API",
+    "SuperAdmin platform panel for tenant management, subscriptions, and payment reminders",
+    "Multi-tenant branding: school colors, logo, and name loaded from live API on startup",
+    "Role-based access: SuperAdmin, Principal, Teacher, Admissions Officer, Account Officer",
+    "Demo mode with full mock data and zero API calls",
+    "Per-school color themes applied dynamically throughout the UI",
+    "Bulk student CSV import with drag-and-drop and progress bar",
+    "Premier UI: glass-morphism cards, animated sidebar, premium typography"
   ],
-  "category": "productivity",
+  "category": "education",
   "tags": [
-    "school-management",
+    "school",
+    "education",
     "multi-tenant",
-    "admin-panel",
-    "subscriptions",
-    "notifications",
-    "edtech"
+    "management",
+    "admin",
+    "students",
+    "teachers",
+    "attendance",
+    "fees"
   ],
-  "last_updated": "2026-04-21T07:13:59.402Z"
+  "last_updated": "2026-04-26T08:53:22.245Z"
 }

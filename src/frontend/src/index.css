@@ -3,36 +3,53 @@
 @tailwind utilities;
 
 @font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
-  font-weight: 300 700;
+  font-family: "Space Grotesk";
+  src: url("/assets/fonts/SpaceGrotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "DM Sans";
+  src: url("/assets/fonts/DMSans.woff2") format("woff2");
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/fonts/JetBrainsMono.woff2") format("woff2");
+  font-weight: 400 600;
   font-display: swap;
 }
 
 @layer base {
   :root {
     --radius: 0.75rem;
-    /* Page background: #EEF2F6 → oklch */
-    --background: 0.965 0.01 240;
-    --foreground: 0.18 0.01 240;
+    --font-display: "Space Grotesk", system-ui, sans-serif;
+    --font-body: "DM Sans", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", monospace;
+    /* Light mode: clean bright background */
+    --background: 0.98 0.008 240;
+    --foreground: 0.14 0.01 240;
     --card: 1 0 0;
-    --card-foreground: 0.18 0.01 240;
+    --card-foreground: 0.14 0.01 240;
     --popover: 1 0 0;
-    --popover-foreground: 0.18 0.01 240;
-    /* Primary blue #0B5AAE */
+    --popover-foreground: 0.14 0.01 240;
+    /* Primary blue — school brand color (dynamic override at runtime) */
     --primary: 0.42 0.14 255;
     --primary-foreground: 1 0 0;
-    --secondary: 0.94 0.015 240;
-    --secondary-foreground: 0.25 0.025 240;
-    --muted: 0.94 0.015 240;
-    --muted-foreground: 0.52 0.01 250;
-    --accent: 0.92 0.02 240;
-    --accent-foreground: 0.25 0.025 240;
-    /* Red #EF4444 */
+    --secondary: 0.96 0.01 240;
+    --secondary-foreground: 0.22 0.02 240;
+    --muted: 0.93 0.015 240;
+    --muted-foreground: 0.48 0.01 250;
+    --accent: 0.91 0.025 240;
+    --accent-foreground: 0.22 0.02 240;
+    /* Red for destructive */
     --destructive: 0.63 0.23 25;
     --destructive-foreground: 1 0 0;
-    --border: 0.9 0.01 240;
-    --input: 0.9 0.01 240;
+    --border: 0.91 0.01 240;
+    --input: 0.94 0.01 240;
     --ring: 0.42 0.14 255;
     /* Charts */
     --chart-1: 0.42 0.14 255;
@@ -40,21 +57,38 @@
     --chart-3: 0.63 0.23 25;
     --chart-4: 0.75 0.15 55;
     --chart-5: 0.55 0.12 295;
-    /* Sidebar: dark navy #0C1F33 → slate blue #1E3A55 */
-    --sidebar: 0.2 0.04 240;
-    --sidebar-foreground: 0.95 0.01 240;
+    /* Sidebar: dark navy #0C1F33 */
+    --sidebar: 0.18 0.04 240;
+    --sidebar-foreground: 0.96 0.01 240;
     --sidebar-primary: 0.42 0.14 255;
     --sidebar-primary-foreground: 1 0 0;
-    --sidebar-accent: 0.28 0.05 235;
-    --sidebar-accent-foreground: 0.95 0.01 240;
-    --sidebar-border: 0.3 0.04 240;
+    --sidebar-accent: 0.26 0.05 235;
+    --sidebar-accent-foreground: 0.96 0.01 240;
+    --sidebar-border: 0.28 0.04 240;
     --sidebar-ring: 0.42 0.14 255;
+    /* Platform Admin: dark slate theme */
+    --platform-admin-bg: 0.13 0.02 240;
+    --platform-admin-fg: 0.95 0.01 240;
+    --platform-admin-card: 0.2 0.02 240;
+    --platform-admin-border: 0.25 0.02 240;
     /* Brand tokens */
     --brand-blue: 0.42 0.14 255;
-    --brand-navy: 0.2 0.04 240;
+    --brand-navy: 0.18 0.04 240;
     --success: 0.72 0.19 145;
     --warning: 0.78 0.17 65;
     --info: 0.58 0.12 240;
+
+    /* ── Shadow CSS custom properties ───────────────────────────────────────── */
+    --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px
+      rgba(0, 0, 0, 0.04);
+    --shadow-elevated: 0 4px 12px 0 rgba(0, 0, 0, 0.08), 0 2px 4px -1px
+      rgba(0, 0, 0, 0.05);
+    --shadow-floating: 0 12px 24px 0 rgba(0, 0, 0, 0.12), 0 8px 16px -2px
+      rgba(0, 0, 0, 0.08);
+    --shadow-modal: 0 20px 40px 0 rgba(0, 0, 0, 0.15), 0 12px 24px -2px
+      rgba(0, 0, 0, 0.1);
+    --shadow-overlay: 0 25px 50px 0 rgba(0, 0, 0, 0.2);
 
     /* ── Per-school dynamic theme tokens ───────────────────────────────────────
        These are set at runtime by applyTheme() in src/lib/theme.ts.
@@ -65,6 +99,18 @@
     --color-primary-light: rgba(11, 90, 174, 0.15);
     --color-primary-foreground: #ffffff;
     --school-accent: #0b5aae;
+
+    /* Shadow CSS custom properties — 6-level hierarchy */
+    --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px -1px
+      rgba(0, 0, 0, 0.03);
+    --shadow-elevated: 0 4px 12px 0 rgba(0, 0, 0, 0.08), 0 2px 4px -1px
+      rgba(0, 0, 0, 0.04);
+    --shadow-floating: 0 12px 24px 0 rgba(0, 0, 0, 0.11), 0 8px 16px -2px
+      rgba(0, 0, 0, 0.06);
+    --shadow-modal: 0 20px 40px 0 rgba(0, 0, 0, 0.14), 0 12px 24px -2px
+      rgba(0, 0, 0, 0.09);
+    --shadow-overlay: 0 25px 50px 0 rgba(0, 0, 0, 0.18);
   }
 
   * {
@@ -72,7 +118,10 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    font-family: var(--font-body);
+  }
+  body.platform-admin {
+    @apply bg-[oklch(var(--platform-admin-bg))] text-[oklch(var(--platform-admin-fg))];
   }
 
   /* ── School-brand focus rings ───────────────────────────────────────────── */
@@ -83,18 +132,342 @@
 }
 
 @layer utilities {
-  /* Active sidebar link: uses the per-school primary color */
+  /* ── Premium Typography ────────────────────────────────────────────────── */
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-body {
+    font-family: var(--font-body);
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  /* ── Glass-morphism Effects ────────────────────────────────────────────── */
+  .glass {
+    backdrop-filter: blur(12px) saturate(1.4);
+    -webkit-backdrop-filter: blur(12px) saturate(1.4);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+  .glass-dark {
+    backdrop-filter: blur(16px) saturate(1.6);
+    -webkit-backdrop-filter: blur(16px) saturate(1.6);
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .glass-elevated {
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: var(--shadow-elevated);
+  }
+
+  /* ── Shadow Hierarchy (6 levels) ───────────────────────────────────────── */
+  .shadow-subtle {
+    box-shadow: var(--shadow-subtle);
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+  .shadow-floating {
+    box-shadow: var(--shadow-floating);
+  }
+  .shadow-modal {
+    box-shadow: var(--shadow-modal);
+  }
+  .shadow-overlay {
+    box-shadow: var(--shadow-overlay);
+  }
+
+  /* ── Smooth Transitions ────────────────────────────────────────────────── */
+  .transition-smooth {
+    transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .transition-fast {
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ── Interactive Elevation ─────────────────────────────────────────────── */
+  .hover-lift {
+    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms
+      cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-floating);
+  }
+  .hover-glow {
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hover-glow:hover {
+    box-shadow: 0 0 0 2px var(--color-primary), var(--shadow-elevated);
+  }
+
+  /* ── Premium Card Hover Effects ────────────────────────────────────────── */
+  .card-premium {
+    transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .card-premium:hover {
+    transform: translateY(-6px) scale(1.01);
+    box-shadow: var(--shadow-floating);
+  }
+
+  /* ── Form Input Enhancement ────────────────────────────────────────────── */
+  .input-premium {
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-card);
+  }
+  .input-premium:focus {
+    box-shadow: 0 0 0 3px var(--color-primary-light), 0 0 0 1px
+      var(--color-primary);
+  }
+
+  /* ── Button Press Animation ────────────────────────────────────────────── */
+  .btn-press:active {
+    transform: scale(0.98);
+  }
+
+  /* ── Staggered List Animation (for tables, lists) ──────────────────────── */
+  .stagger-item {
+    animation: slide-up 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .stagger-item:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .stagger-item:nth-child(2) {
+    animation-delay: 50ms;
+  }
+  .stagger-item:nth-child(3) {
+    animation-delay: 100ms;
+  }
+  .stagger-item:nth-child(4) {
+    animation-delay: 150ms;
+  }
+  .stagger-item:nth-child(5) {
+    animation-delay: 200ms;
+  }
+  .stagger-item:nth-child(n + 6) {
+    animation-delay: 250ms;
+  }
+
+  /* ── Data Table Polish ─────────────────────────────────────────────────── */
+  .table-row-hover {
+    transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .table-row-hover:hover {
+    background-color: oklch(var(--muted) / 0.3);
+  }
+
+  /* ── Floating Label Support ────────────────────────────────────────────── */
+  .floating-label {
+    position: relative;
+  }
+  .floating-label input,
+  .floating-label select,
+  .floating-label textarea {
+    padding-top: 1.25rem;
+    padding-bottom: 0.5rem;
+  }
+  .floating-label label {
+    position: absolute;
+    top: 0.75rem;
+    left: 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ── Premium Checkbox/Radio ────────────────────────────────────────────── */
+  input[type="checkbox"],
+  input[type="radio"] {
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  input[type="checkbox"]:checked,
+  input[type="radio"]:checked {
+    box-shadow: 0 0 0 2px oklch(var(--background)), 2px 2px 4px
+      var(--color-primary);
+  }
+
+  /* ── Smooth Focus Ring ─────────────────────────────────────────────────── */
+  .focus-ring {
+    transition: outline 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .focus-ring:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 4px;
+  }
+
+  /* ── Badge Polish ──────────────────────────────────────────────────────── */
+  .badge-premium {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.375rem 0.875rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    box-shadow: var(--shadow-card);
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .badge-premium:hover {
+    box-shadow: var(--shadow-elevated);
+    transform: translateY(-2px);
+  }
+
+  /* ── Status Indicator Pulse ────────────────────────────────────────────── */
+  .status-indicator {
+    position: relative;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--color-primary);
+  }
+  .status-indicator.live {
+    animation: pulse-live 2s ease-in-out infinite;
+  }
+  @keyframes pulse-live {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(11, 90, 174, 0.7);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(11, 90, 174, 0);
+    }
+  }
+
+  /* ── Notification Toast Polish ─────────────────────────────────────────── */
+  .toast-premium {
+    animation: slide-in-right 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-floating);
+  }
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  /* ── Loading Skeleton ──────────────────────────────────────────────────── */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      oklch(var(--muted) / 0.5) 25%,
+      oklch(var(--muted) / 0.8) 50%,
+      oklch(var(--muted) / 0.5) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer-pulse 2s linear infinite;
+  }
+  @keyframes shimmer-pulse {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* ── Modal Entrance ────────────────────────────────────────────────────── */
+  .modal-enter {
+    animation: modal-pop 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes modal-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.95) translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  /* ── Sidebar Active Indicator ──────────────────────────────────────────── */
+  .sidebar-indicator {
+    position: absolute;
+    left: 0;
+    width: 3px;
+    background-color: var(--color-primary);
+    border-radius: 0 3px 3px 0;
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ── Active sidebar link: uses the per-school primary color ────────────── */
   .nav-link-active {
     background-color: var(--color-primary-light);
     color: var(--color-primary-foreground);
   }
 
-  /* School-brand button utility (supplements shadcn primary variant) */
+  /* ── School-brand button utility (supplements shadcn primary variant) ───── */
   .btn-school-primary {
     background-color: var(--color-primary);
     color: var(--color-primary-foreground);
+    transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow
+      200ms;
   }
   .btn-school-primary:hover {
     background-color: var(--color-primary-hover);
+    box-shadow: var(--shadow-elevated);
+  }
+
+  /* ── Gradient text utility ─────────────────────────────────────────────── */
+  .text-gradient {
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* ── Premium card border gradient ──────────────────────────────────────── */
+  .border-gradient {
+    position: relative;
+    border: none;
+  }
+  .border-gradient::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      oklch(0.7 0.1 255 / 0.5),
+      oklch(0.8 0.05 220 / 0.2)
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* ── Scrollbar polish ──────────────────────────────────────────────────── */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.35 0.03 240) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    border-radius: 2px;
+    background: oklch(0.35 0.03 240);
   }
 }

@@ -41,18 +41,9 @@ export function getDemoTenantId(): string {
 }
 
 /**
- * Returns the effective API base URL, checking localStorage override first.
+ * Returns the effective API base URL — ALWAYS the hardcoded production URL.
+ * The localStorage override has been removed to prevent accidental misconfiguration.
  */
 export function getApiBaseUrl(): string {
-  if (typeof window !== "undefined") {
-    try {
-      const override = localStorage.getItem("escolaui_api_url");
-      if (override?.trim()) return override.trim();
-    } catch {
-      // ignore
-    }
-  }
-  return (
-    import.meta.env.VITE_API_BASE_URL || "https://escola.doorstepgarage.in/api"
-  );
+  return "https://escola.doorstepgarage.in/api";
 }

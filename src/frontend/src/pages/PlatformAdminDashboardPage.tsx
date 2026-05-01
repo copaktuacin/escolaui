@@ -1,444 +1,617 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import {
-  AlertCircle,
-  ArrowRight,
-  Bell,
-  Building2,
-  CheckCircle2,
-  CreditCard,
-  DollarSign,
-  PauseCircle,
-  TrendingUp,
-} from "lucide-react";
-import { isDemoMode } from "../lib/demoMode";
-import {
-  DEMO_REMINDERS,
-  DEMO_TENANTS,
-  type PaymentReminder,
-  type SubscriptionStatus,
+  type PaymentSummary,
+  type ReminderLog,
   type Tenant,
-} from "../lib/mockData";
+  adminGetPaymentSummary,
+  adminGetReminderLog,
+  adminGetTenants,
+} from "../lib/api";
+import { isDemoMode } from "../lib/demoMode";
 
-// ─── Hooks ────────────────────────────────────────────────────────────────────
+// ─── Demo data ────────────────────────────────────────────────────────────────
 
-function usePlatformStats() {
-  return useQuery({
-    queryKey: ["platform-stats"],
-    queryFn: async (): Promise<{
-      tenants: Tenant[];
-      reminders: PaymentReminder[];
-    }> => {
-      if (isDemoMode()) {
-        return { tenants: DEMO_TENANTS, reminders: DEMO_REMINDERS };
-      }
-      return { tenants: DEMO_TENANTS, reminders: DEMO_REMINDERS };
-    },
-  });
-}
+const MOCK_SUMMARY: PaymentSummary = {
+  totalPayments: 48,
+  totalAmount: 14700,
+  successfulPayments: 44,
+  failedPayments: 2,
+  pendingPayments: 2,
+};
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
+const MOCK_TENANTS: Tenant[] = [
+  {
+    id: 1,
+    schoolName: "Springfield Academy",
+    adminEmail: "admin@springfield.edu",
+    subscriptionPlan: "Premium",
+    isActive: true,
+    createdAt: "2024-09-01T00:00:00Z",
+    nextBillingDate: "2026-05-01T00:00:00Z",
+  },
+  {
+    id: 2,
+    schoolName: "Riverside Public School",
+    adminEmail: "admin@riverside.edu",
+    subscriptionPlan: "Standard",
+    isActive: true,
+    createdAt: "2024-11-15T00:00:00Z",
+    nextBillingDate: "2026-05-15T00:00:00Z",
+  },
+  {
+    id: 3,
+    schoolName: "Lakewood International",
+    adminEmail: "admin@lakewood.edu",
+    subscriptionPlan: "Basic",
+    isActive: false,
+    createdAt: "2025-01-10T00:00:00Z",
+    nextBillingDate: "2026-04-10T00:00:00Z",
+    outstandingAmount: 2400,
+  },
+  {
+    id: 4,
+    schoolName: "Greenhill Primary",
+    adminEmail: "admin@greenhill.edu",
+    subscriptionPlan: "Standard",
+    isActive: true,
+    createdAt: "2025-03-20T00:00:00Z",
+    nextBillingDate: "2026-06-20T00:00:00Z",
+  },
+  {
+    id: 5,
+    schoolName: "Westbrook High School",
+    adminEmail: "admin@westbrook.edu",
+    subscriptionPlan: "Premium",
+    isActive: true,
+    createdAt: "2025-04-01T00:00:00Z",
+    nextBillingDate: "2026-05-25T00:00:00Z",
+  },
+];
+
+const MOCK_REMINDERS: ReminderLog[] = [
+  {
+    id: 1,
+    sentAt: "2026-04-15T10:30:00Z",
+    sentBy: "Platform Admin",
+    message:
+      "Your subscription payment is overdue. Please settle the outstanding amount to avoid service interruption.",
+    recipients: [{ tenantId: 3, schoolName: "Lakewood International" }],
+    sentCount: 1,
+    status: "Delivered",
+  },
+  {
+    id: 2,
+    sentAt: "2026-04-10T09:00:00Z",
+    sentBy: "Platform Admin",
+    message:
+      "Reminder: Your subscription renewal is due in 15 days. Please ensure your payment details are up to date.",
+    recipients: [
+      { tenantId: 2, schoolName: "Riverside Public School" },
+      { tenantId: 5, schoolName: "Westbrook High School" },
+    ],
+    sentCount: 2,
+    status: "Delivered",
+  },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function StatCard({
   label,
   value,
-  icon: Icon,
-  accent,
-  loading,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ComponentType<{ className?: string }>;
-  accent: string;
-  loading?: boolean;
-}) {
-  return (
-    <Card className="bg-card border border-border">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xs text-muted-foreground font-medium">{label}</p>
-            {loading ? (
-              <Skeleton className="h-8 w-16 mt-1" />
-            ) : (
-              <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
-            )}
-          </div>
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: accent }}
-          >
-            <Icon className="w-5 h-5 text-white" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-const STATUS_CONFIG: Record<
-  SubscriptionStatus,
-  {
-    label: string;
-    color: string;
-    icon: React.ComponentType<{ className?: string }>;
-  }
-> = {
-  Active: {
-    label: "Active",
-    color: "oklch(0.72 0.19 145 / 0.15)",
-    icon: CheckCircle2,
-  },
-  Overdue: {
-    label: "Overdue",
-    color: "oklch(0.63 0.23 25 / 0.15)",
-    icon: AlertCircle,
-  },
-  DueSoon: {
-    label: "Due Soon",
-    color: "oklch(0.78 0.17 65 / 0.15)",
-    icon: TrendingUp,
-  },
-  Paused: {
-    label: "Paused",
-    color: "oklch(0.55 0.03 240 / 0.15)",
-    icon: PauseCircle,
-  },
-};
-
-const STATUS_BADGE_CLASS: Record<SubscriptionStatus, string> = {
-  Active:
-    "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
-  Overdue: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
-  DueSoon:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-  Paused: "bg-secondary text-secondary-foreground",
-};
-
-function SubscriptionStatusBadge({ status }: { status: SubscriptionStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${STATUS_BADGE_CLASS[status]}`}
-    >
-      {status === "DueSoon" ? "Due Soon" : status}
-    </span>
-  );
-}
-
-function ReminderRow({
-  reminder,
-  index,
-}: { reminder: PaymentReminder; index: number }) {
+  color,
+  isCurrency,
+}: { label: string; value: number; color: string; isCurrency?: boolean }) {
   return (
     <div
-      className="flex items-center justify-between gap-3 py-3 border-b border-border last:border-0"
-      data-ocid={`dashboard.reminder.item.${index}`}
+      className="rounded-xl p-5 border"
+      style={{ background: "#1e293b", borderColor: "#334155" }}
+      data-ocid={`platform_dashboard.kpi_${label.toLowerCase().replace(/\s+/g, "_")}.card`}
     >
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">
-          {reminder.tenantName}
-        </p>
-        <p className="text-xs text-muted-foreground truncate">
-          {reminder.recipientEmail}
-        </p>
-      </div>
-      <div className="flex items-center gap-3 flex-shrink-0">
-        <span className="text-xs text-muted-foreground hidden sm:block">
-          {new Date(reminder.sentAt).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-          })}
-        </span>
-        <Badge
-          variant="outline"
-          className="text-[11px] capitalize border-green-500/30 text-green-700 bg-green-50"
-        >
-          {reminder.status}
-        </Badge>
-      </div>
+      <p
+        className="text-[11px] font-semibold uppercase tracking-widest"
+        style={{ color: "#94a3b8" }}
+      >
+        {label}
+      </p>
+      <p className="text-3xl font-bold mt-1.5 tabular-nums" style={{ color }}>
+        {isCurrency ? `₹${value.toLocaleString()}` : value.toLocaleString()}
+      </p>
     </div>
+  );
+}
+
+function StatusDot({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${active ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/50" : "bg-gray-800 text-gray-500 border border-gray-700"}`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full mr-1.5 ${active ? "bg-emerald-400" : "bg-gray-600"}`}
+      />
+      {active ? "Active" : "Inactive"}
+    </span>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminDashboardPage() {
-  const { data, isLoading } = usePlatformStats();
+  const { user } = useAuth();
+  const [summary, setSummary] = useState<PaymentSummary | null>(null);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [reminders, setReminders] = useState<ReminderLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const tenants = data?.tenants ?? [];
-  const reminders = data?.reminders ?? [];
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (isDemoMode()) {
+        await new Promise((r) => setTimeout(r, 500));
+        setSummary(MOCK_SUMMARY);
+        setTenants(MOCK_TENANTS.slice(0, 5));
+        setReminders(MOCK_REMINDERS);
+      } else {
+        const [summaryRes, tenantsRes, remindersRes] = await Promise.all([
+          adminGetPaymentSummary(),
+          adminGetTenants(1, 5),
+          adminGetReminderLog(1, 5),
+        ]);
+        // Surface the most critical error (403 > others)
+        const criticalErr =
+          [summaryRes, tenantsRes, remindersRes].find(
+            (r) => !r.success && r.error?.startsWith("Access denied"),
+          )?.error ?? [tenantsRes].find((r) => !r.success)?.error; // only tenant errors block the dashboard
+        if (criticalErr) {
+          setError(criticalErr);
+        }
+        // Payment summary: graceful 404 — show zeroed cards
+        if (summaryRes.success && summaryRes.data) {
+          setSummary(summaryRes.data);
+        } else {
+          // 404 or unavailable — use zeroed placeholder so stat cards still show
+          const is404 =
+            summaryRes.error?.includes("Not Found") ||
+            summaryRes.error?.includes("404");
+          if (!is404) {
+            // Only surface non-404 errors (404 means feature not yet implemented — hide gracefully)
+            console.warn("[EscolaUI] Payment summary error:", summaryRes.error);
+          }
+        }
+        const td = tenantsRes.data as { data?: Tenant[] } | null;
+        setTenants(Array.isArray(td?.data) ? td.data : []);
+        // Reminder log: graceful 404
+        if (remindersRes.success) {
+          const rd = remindersRes.data as { data?: ReminderLog[] } | null;
+          setReminders(Array.isArray(rd?.data) ? rd.data : []);
+        }
+      }
+    } catch {
+      setError("Failed to load dashboard data. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const totalTenants = tenants.length;
-  const activeSubscriptions = tenants.filter(
-    (t) => t.subscriptionStatus === "Active",
-  ).length;
-  const overduePayments = tenants.filter(
-    (t) => t.subscriptionStatus === "Overdue",
-  ).length;
-  const monthlyRevenue = tenants
-    .filter(
-      (t) => t.billingCycle === "monthly" && t.subscriptionStatus === "Active",
-    )
-    .reduce((s, t) => s + t.amountDue, 0);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  const statusCounts: Record<SubscriptionStatus, number> = {
-    Active: tenants.filter((t) => t.subscriptionStatus === "Active").length,
-    Overdue: tenants.filter((t) => t.subscriptionStatus === "Overdue").length,
-    DueSoon: tenants.filter((t) => t.subscriptionStatus === "DueSoon").length,
-    Paused: tenants.filter((t) => t.subscriptionStatus === "Paused").length,
-  };
-
-  const recentReminders = [...reminders]
-    .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
-    .slice(0, 5);
+  const statCards = [
+    {
+      label: "Total Payments",
+      value: summary?.totalPayments ?? 0,
+      color: "#60a5fa",
+    },
+    {
+      label: "Total Amount",
+      value: summary?.totalAmount ?? 0,
+      color: "#a78bfa",
+      isCurrency: true,
+    },
+    {
+      label: "Successful",
+      value: summary?.successfulPayments ?? 0,
+      color: "#34d399",
+    },
+    {
+      label: "Failed",
+      value: summary?.failedPayments ?? 0,
+      color: "#f87171",
+    },
+    {
+      label: "Pending",
+      value: summary?.pendingPayments ?? 0,
+      color: "#fbbf24",
+    },
+  ];
 
   return (
-    <div className="space-y-6" data-ocid="platform_dashboard.page">
+    <div className="space-y-7" data-ocid="platform_dashboard.page">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          Platform Overview
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Monitor all tenants, subscriptions, and platform activity
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+            Platform Administration
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
+            Welcome back, {user?.name?.split(" ")[0] ?? "Admin"} — monitor all
+            tenants and platform activity
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+            style={{
+              background: "rgba(52,211,153,0.1)",
+              border: "1px solid rgba(52,211,153,0.25)",
+              color: "#34d399",
+            }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+              style={{ animation: "pulse 2s infinite" }}
+            />
+            System Online
+          </span>
+          <button
+            type="button"
+            onClick={fetchData}
+            disabled={loading}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border"
+            style={{
+              background: "#1e293b",
+              borderColor: "#334155",
+              color: "#94a3b8",
+            }}
+            data-ocid="platform_dashboard.refresh.button"
+          >
+            {loading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Total Tenants"
-          value={totalTenants}
-          icon={Building2}
-          accent="oklch(0.42 0.14 255)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="Active Subscriptions"
-          value={activeSubscriptions}
-          icon={CheckCircle2}
-          accent="oklch(0.55 0.19 145)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="Overdue Payments"
-          value={overduePayments}
-          icon={AlertCircle}
-          accent="oklch(0.55 0.23 25)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="Monthly Revenue"
-          value={`$${monthlyRevenue.toLocaleString()}`}
-          icon={DollarSign}
-          accent="oklch(0.62 0.17 65)"
-          loading={isLoading}
-        />
-      </div>
+      {/* Error state */}
+      {error && (
+        <div
+          className="rounded-xl p-4 border"
+          style={{
+            background: "rgba(248,113,113,0.08)",
+            borderColor: "rgba(248,113,113,0.25)",
+          }}
+          data-ocid="platform_dashboard.error_state"
+        >
+          <div className="flex items-start gap-3">
+            <span style={{ color: "#f87171", fontSize: "1.1rem" }}>⛔</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "#fca5a5" }}>
+                {error.startsWith("Access denied")
+                  ? "Access Denied — SuperAdmin Required"
+                  : "Failed to load dashboard data"}
+              </p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {error}
+              </p>
+              {error.startsWith("Access denied") && (
+                <p className="text-xs mt-2" style={{ color: "#94a3b8" }}>
+                  Your current session may not have SuperAdmin privileges. Log
+                  out and log in again with your SuperAdmin credentials.
+                </p>
+              )}
+            </div>
+            {!error.startsWith("Access denied") && (
+              <button
+                type="button"
+                onClick={fetchData}
+                className="ml-auto text-xs underline flex-shrink-0"
+                style={{ color: "#f87171" }}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
-      {/* Quick Actions */}
+      {/* KPI cards */}
+      {loading ? (
+        <div
+          className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4"
+          data-ocid="platform_dashboard.kpis.loading_state"
+        >
+          {[1, 2, 3, 4, 5].map((n) => (
+            <div
+              key={n}
+              className="h-24 rounded-xl animate-pulse"
+              style={{ background: "#1e293b" }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          {statCards.map((c) => (
+            <StatCard key={c.label} {...c} />
+          ))}
+        </div>
+      )}
+
+      {/* Quick actions */}
       <div
         className="flex flex-wrap gap-3"
         data-ocid="platform_dashboard.quick_actions"
       >
-        <Button
-          asChild
-          className="gap-2"
+        <a
+          href="/platform-admin/schools"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          style={{ background: "#4f46e5", color: "#fff" }}
+          data-ocid="platform_dashboard.manage_tenants.button"
+        >
+          🏫 Manage Schools
+        </a>
+        <a
+          href="/platform-admin/subscriptions"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border"
+          style={{
+            background: "#1e293b",
+            borderColor: "#334155",
+            color: "#94a3b8",
+          }}
           data-ocid="platform_dashboard.go_to_subscriptions.button"
         >
-          <Link to="/platform-admin/subscriptions">
-            <CreditCard className="w-4 h-4" />
-            View Subscriptions
-            <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Link>
-        </Button>
-        <Button
-          asChild
-          variant="outline"
-          className="gap-2"
+          💳 View Subscriptions
+        </a>
+        <a
+          href="/platform-admin/reminders"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border"
+          style={{
+            background: "#1e293b",
+            borderColor: "#334155",
+            color: "#94a3b8",
+          }}
           data-ocid="platform_dashboard.send_reminders.button"
         >
-          <Link to="/platform-admin/reminders">
-            <Bell className="w-4 h-4" />
-            Send Reminders
-          </Link>
-        </Button>
+          🔔 Send Reminders
+        </a>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Subscription Status Breakdown */}
-        <Card
-          className="bg-card border border-border"
-          data-ocid="platform_dashboard.status_breakdown.card"
+        {/* Recent Tenants */}
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ background: "#1a2234", borderColor: "#1e293b" }}
+          data-ocid="platform_dashboard.recent_tenants.card"
         >
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">
-              Subscription Status Breakdown
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {isLoading
-              ? [1, 2, 3, 4].map((n) => (
-                  <Skeleton key={n} className="h-12 w-full rounded-lg" />
-                ))
-              : (
-                  Object.entries(statusCounts) as [SubscriptionStatus, number][]
-                ).map(([status, count]) => {
-                  const cfg = STATUS_CONFIG[status];
-                  const pct =
-                    totalTenants > 0
-                      ? Math.round((count / totalTenants) * 100)
-                      : 0;
-                  return (
-                    <div
-                      key={status}
-                      className="flex items-center gap-3 p-3 rounded-lg"
-                      style={{ background: cfg.color }}
-                      data-ocid={`platform_dashboard.status.${status.toLowerCase()}.card`}
-                    >
-                      <cfg.icon className="w-4 h-4 flex-shrink-0 text-foreground" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-foreground">
-                            {cfg.label}
-                          </span>
-                          <span className="text-sm font-bold text-foreground">
-                            {count}
-                          </span>
-                        </div>
-                        <div className="w-full bg-black/10 rounded-full h-1.5 mt-1.5">
-                          <div
-                            className="h-1.5 rounded-full bg-foreground/30 transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                      <span className="text-xs text-muted-foreground flex-shrink-0">
-                        {pct}%
-                      </span>
-                    </div>
-                  );
-                })}
-          </CardContent>
-        </Card>
-
-        {/* Recent Reminders */}
-        <Card
-          className="bg-card border border-border"
-          data-ocid="platform_dashboard.recent_reminders.card"
-        >
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-base font-semibold">
-              Recent Reminders
-            </CardTitle>
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className="text-xs gap-1 h-7"
-              data-ocid="platform_dashboard.view_all_reminders.button"
+          <div
+            className="flex items-center justify-between px-5 py-4 border-b"
+            style={{ borderColor: "#1e293b" }}
+          >
+            <h2 className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+              Recent Schools
+            </h2>
+            <a
+              href="/platform-admin/schools"
+              className="text-xs"
+              style={{ color: "#6366f1" }}
             >
-              <Link to="/platform-admin/reminder-log">
-                View all <ArrowRight className="w-3 h-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div
-                className="space-y-3"
-                data-ocid="platform_dashboard.reminders.loading_state"
-              >
+              View all →
+            </a>
+          </div>
+          <div className="p-2">
+            {loading ? (
+              <div data-ocid="platform_dashboard.tenants.loading_state">
                 {[1, 2, 3].map((n) => (
-                  <Skeleton key={n} className="h-12 w-full" />
+                  <div
+                    key={n}
+                    className="flex items-center gap-3 p-3 rounded-lg"
+                  >
+                    <div
+                      className="w-8 h-8 rounded-lg animate-pulse"
+                      style={{ background: "#1e293b" }}
+                    />
+                    <div className="flex-1 space-y-1.5">
+                      <div
+                        className="h-3.5 w-32 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                      <div
+                        className="h-3 w-24 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                    </div>
+                  </div>
                 ))}
               </div>
-            ) : recentReminders.length === 0 ? (
+            ) : tenants.length === 0 ? (
               <div
-                className="flex flex-col items-center justify-center py-8 text-center"
-                data-ocid="platform_dashboard.reminders.empty_state"
+                className="flex flex-col items-center py-8 text-center"
+                data-ocid="platform_dashboard.tenants.empty_state"
               >
-                <Bell className="w-8 h-8 text-muted-foreground/30 mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  No reminders sent yet
+                <p className="text-sm" style={{ color: "#475569" }}>
+                  No schools yet
                 </p>
+                <a
+                  href="/platform-admin/schools"
+                  className="mt-2 text-xs"
+                  style={{ color: "#6366f1" }}
+                >
+                  Create first school →
+                </a>
               </div>
             ) : (
-              <div>
-                {recentReminders.map((r, i) => (
-                  <ReminderRow key={r.id} reminder={r} index={i + 1} />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tenant status at-a-glance */}
-      {!isLoading && tenants.length > 0 && (
-        <Card
-          className="bg-card border border-border"
-          data-ocid="platform_dashboard.tenant_overview.card"
-        >
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-base font-semibold">
-              Tenant Overview
-            </CardTitle>
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className="text-xs gap-1 h-7"
-              data-ocid="platform_dashboard.view_all_tenants.button"
-            >
-              <Link to="/platform-admin/tenants">
-                Manage <ArrowRight className="w-3 h-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {tenants.map((tenant, i) => (
+              tenants.map((t, i) => (
                 <div
-                  key={tenant.id}
-                  className="flex items-center gap-3 py-2 border-b border-border last:border-0"
+                  key={t.id}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5"
                   data-ocid={`platform_dashboard.tenant.item.${i + 1}`}
                 >
                   <div
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                    style={{ backgroundColor: tenant.primaryColor }}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
+                    style={{
+                      background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                    }}
                   >
-                    {tenant.schoolName
+                    {t.schoolName
                       .split(" ")
                       .map((w) => w[0])
                       .slice(0, 2)
                       .join("")}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
-                      {tenant.schoolName}
+                    <p
+                      className="text-sm font-medium truncate"
+                      style={{ color: "#e2e8f0" }}
+                    >
+                      {t.schoolName}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {tenant.plan} · {tenant.billingCycle}
+                    <p
+                      className="text-xs truncate"
+                      style={{ color: "#475569" }}
+                    >
+                      {t.subscriptionPlan} · {t.adminEmail}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="text-sm font-semibold text-foreground hidden sm:block">
-                      ${tenant.amountDue.toLocaleString()}
-                    </span>
-                    <SubscriptionStatusBadge
-                      status={tenant.subscriptionStatus}
-                    />
-                  </div>
+                  <StatusDot active={t.isActive} />
                 </div>
-              ))}
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Recent Reminders */}
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ background: "#1a2234", borderColor: "#1e293b" }}
+          data-ocid="platform_dashboard.recent_reminders.card"
+        >
+          <div
+            className="flex items-center justify-between px-5 py-4 border-b"
+            style={{ borderColor: "#1e293b" }}
+          >
+            <h2 className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+              Recent Reminders
+            </h2>
+            <a
+              href="/platform-admin/reminder-log"
+              className="text-xs"
+              style={{ color: "#6366f1" }}
+            >
+              View all →
+            </a>
+          </div>
+          <div className="p-2">
+            {loading ? (
+              <div data-ocid="platform_dashboard.reminders.loading_state">
+                {[1, 2].map((n) => (
+                  <div
+                    key={n}
+                    className="flex items-center gap-3 p-3 rounded-lg"
+                  >
+                    <div className="flex-1 space-y-1.5">
+                      <div
+                        className="h-3.5 w-40 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                      <div
+                        className="h-3 w-24 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : reminders.length === 0 ? (
+              <div
+                className="flex flex-col items-center py-8 text-center"
+                data-ocid="platform_dashboard.reminders.empty_state"
+              >
+                <p className="text-sm" style={{ color: "#475569" }}>
+                  No reminders sent yet
+                </p>
+                <a
+                  href="/platform-admin/reminders"
+                  className="mt-2 text-xs"
+                  style={{ color: "#6366f1" }}
+                >
+                  Send first reminder →
+                </a>
+              </div>
+            ) : (
+              reminders.map((r, i) => (
+                <div
+                  key={r.id}
+                  className="px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5"
+                  data-ocid={`platform_dashboard.reminder.item.${i + 1}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p
+                      className="text-sm font-medium truncate"
+                      style={{ color: "#e2e8f0" }}
+                    >
+                      {r.recipients.map((x) => x.schoolName).join(", ")}
+                    </p>
+                    <span
+                      className="text-[11px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
+                      style={{
+                        background: "rgba(52,211,153,0.1)",
+                        color: "#34d399",
+                        border: "1px solid rgba(52,211,153,0.2)",
+                      }}
+                    >
+                      {r.status}
+                    </span>
+                  </div>
+                  <p
+                    className="text-xs mt-0.5 truncate"
+                    style={{ color: "#475569" }}
+                  >
+                    {new Date(r.sentAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}{" "}
+                    · {r.sentCount} recipient{r.sentCount !== 1 ? "s" : ""}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Pending payments alert */}
+      {!loading && (summary?.pendingPayments ?? 0) > 0 && (
+        <div
+          className="rounded-2xl p-4 flex items-center justify-between gap-4 border"
+          style={{
+            background: "rgba(251,191,36,0.06)",
+            borderColor: "rgba(251,191,36,0.2)",
+          }}
+          data-ocid="platform_dashboard.pending_actions.card"
+        >
+          <div className="flex items-center gap-3">
+            <span style={{ color: "#fbbf24", fontSize: "1.25rem" }}>⚠</span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+                {summary?.pendingPayments} pending payment
+                {(summary?.pendingPayments ?? 0) !== 1 ? "s" : ""}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
+                Send reminders to collect outstanding payments
+              </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <a
+            href="/platform-admin/reminders"
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 transition-colors"
+            style={{ background: "#d97706", color: "#fff" }}
+            data-ocid="platform_dashboard.send_overdue_reminders.button"
+          >
+            Send Reminders
+          </a>
+        </div>
       )}
     </div>
   );

@@ -6,11 +6,10 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { api } from "../lib/api";
+import { api, loginFetch, refreshTokens } from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
 
 export type UserRole =
-  | "admin"
   | "principal"
   | "teacher"
   | "account_officer"
@@ -24,9 +23,14 @@ type User = {
   email: string;
   role: UserRole;
   avatar?: string;
-  /** True only for the platform super-admin (admin@escola.com).
-   *  Tenant-level admins share role="admin" but must NOT access /platform-admin/* routes. */
-  isPlatformAdmin?: boolean;
+  /**
+   * True ONLY for the platform-level super-admin.
+   * Determined by the role field returned from the API ("Admin" or "PlatformAdmin"),
+   * NOT by email comparison.
+   * Platform admin users go to /platform-admin, NOT /dashboard.
+   * School-side users (including Principal) go to /dashboard.
+   */
+  isPlatformAdmin: boolean;
 };
 
 type AuthState = {
@@ -48,12 +52,15 @@ type AuthContextType = AuthState & {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// Demo users reflecting the correct role structure:
+// - "admin" → platform admin (isPlatformAdmin: true, no school-side access)
+// - "principal" → school principal (school admin, isPlatformAdmin: false)
 const DEMO_USERS: Record<string, User> = {
   admin: {
     id: "usr-001",
     name: "Dr. Sarah Evans",
     email: "admin@escola.com",
-    role: "admin",
+    role: "principal", // Placeholder role; isPlatformAdmin=true gates all access
     isPlatformAdmin: true,
   },
   principal: {
@@ -61,31 +68,36 @@ const DEMO_USERS: Record<string, User> = {
     name: "Mr. David Okonkwo",
     email: "principal@escola.com",
     role: "principal",
+    isPlatformAdmin: false,
   },
   teacher: {
     id: "usr-003",
     name: "Mrs. Grace Okafor",
     email: "teacher@escola.com",
     role: "teacher",
+    isPlatformAdmin: false,
   },
   admissions: {
     id: "usr-004",
     name: "Ms. Amara Nwosu",
     email: "admissions@escola.com",
     role: "admission_officer",
+    isPlatformAdmin: false,
   },
   accounts: {
     id: "usr-005",
     name: "Mr. James Bello",
     email: "accounts@escola.com",
     role: "account_officer",
+    isPlatformAdmin: false,
   },
 };
 
 // ---- Exact DTO shapes per API spec ----
 
+// NOTE: Login payload uses lowercase "username" (confirmed working in Postman).
 type LoginRequest = {
-  userName: string;
+  username: string;
   password: string;
 };
 
@@ -103,22 +115,27 @@ type LoginResponse = {
   user: AuthUserDto;
 };
 
-type RefreshResponse = {
-  accessToken: string;
-  refreshToken: string;
-};
-
-// Determine post-login redirect based on role
-function getLoginRedirect(role: UserRole): string {
-  if (role === "admin") return "/platform-admin";
-  return "/dashboard";
+/**
+ * Determine if a user is the platform admin purely from the API role string.
+ * ONLY "superadmin" or "platformadmin" (case-insensitive) → isPlatformAdmin = true.
+ * Plain "admin", "Principal", "SchoolAdmin", or any other role → isPlatformAdmin = false.
+ * School admins with role "admin" in a school context must NOT be treated as platform admin.
+ */
+function resolvePlatformAdmin(apiRole: string | undefined): boolean {
+  const normalized = (apiRole ?? "").toLowerCase();
+  return normalized === "superadmin" || normalized === "platformadmin";
 }
 
-/** Normalise API role string → UserRole enum */
+/** Normalise API role string → UserRole enum (school-side role keys only) */
 function normaliseRole(raw: string | undefined): UserRole {
   const map: Record<string, UserRole> = {
-    Admin: "admin",
-    admin: "admin",
+    // Principal is the school admin
+    Admin: "principal", // Fallback so platform admin has a valid role shape
+    admin: "principal",
+    SuperAdmin: "principal",
+    superadmin: "principal",
+    PlatformAdmin: "principal",
+    platformadmin: "principal",
     Principal: "principal",
     principal: "principal",
     Teacher: "teacher",
@@ -137,14 +154,23 @@ function normaliseRole(raw: string | undefined): UserRole {
 
 /** Map AuthUserDto → internal User */
 function dtoToUser(dto: AuthUserDto, existingEmail?: string): User {
+  const email = dto.email ?? existingEmail ?? "";
+  const isPlatformAdmin = resolvePlatformAdmin(dto.role);
+  const role = normaliseRole(dto.role);
   return {
     id: String(dto.id),
     name: dto.name,
-    email: dto.email ?? existingEmail ?? "",
-    role: normaliseRole(dto.role),
+    email,
+    role,
     avatar: dto.avatar,
-    isPlatformAdmin: normaliseRole(dto.role) === "admin",
+    isPlatformAdmin,
   };
+}
+
+// Determine post-login redirect based on user
+function getLoginRedirect(user: User): string {
+  if (user.isPlatformAdmin) return "/platform-admin";
+  return "/dashboard";
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -170,7 +196,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isDemoMode()) {
         if (userStr) {
           try {
-            const user = JSON.parse(userStr) as User;
+            const parsed = JSON.parse(userStr) as User;
+            // Re-derive isPlatformAdmin in case stored value is missing/stale
+            const user: User = {
+              ...parsed,
+              isPlatformAdmin:
+                parsed.isPlatformAdmin === true ||
+                resolvePlatformAdmin(parsed.role),
+            };
             setState({
               user,
               accessToken,
@@ -193,6 +226,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await api.get<AuthUserDto>("/auth/me");
         if (res.success && res.data) {
           const user = dtoToUser(res.data);
+          console.log(
+            "[EscolaUI] /auth/me → role:",
+            res.data.role,
+            "isPlatformAdmin:",
+            user.isPlatformAdmin,
+          );
           localStorage.setItem("user", JSON.stringify(user));
           setState({
             user,
@@ -212,9 +251,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
       } catch {
+        // /auth/me failed (network error etc.) — fall back to localStorage user
+        // but re-derive isPlatformAdmin to guard against stale/missing flag
         if (userStr) {
           try {
-            const user = JSON.parse(userStr) as User;
+            const parsed = JSON.parse(userStr) as User;
+            // Critical: always re-derive isPlatformAdmin from the stored role
+            // so a page reload never silently loses platform admin access
+            const isPlatformAdmin =
+              parsed.isPlatformAdmin === true ||
+              resolvePlatformAdmin(parsed.role);
+            const user: User = { ...parsed, isPlatformAdmin };
+            console.log(
+              "[EscolaUI] Restored from localStorage — isPlatformAdmin:",
+              isPlatformAdmin,
+              "role:",
+              parsed.role,
+            );
             setState({
               user,
               accessToken,
@@ -234,17 +287,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     init();
   }, []);
 
-  useEffect(() => {
-    const handler = () => logout();
-    window.addEventListener("escola:logout", handler);
-    return () => window.removeEventListener("escola:logout", handler);
-  });
-
   const login = useCallback(async (username: string, password: string) => {
     if (isDemoMode()) {
       await new Promise((r) => setTimeout(r, 600));
       const demoUser = DEMO_USERS[username.toLowerCase()];
-      if (demoUser && password === "password123") {
+      if (demoUser && (password === "password123" || password === "123456")) {
         const accessToken = `demo-access-token-${Date.now()}`;
         const refreshToken = `demo-refresh-token-${Date.now()}`;
         localStorage.setItem("accessToken", accessToken);
@@ -257,21 +304,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated: true,
           isLoading: false,
         });
-        return { success: true, redirectTo: getLoginRedirect(demoUser.role) };
+        return { success: true, redirectTo: getLoginRedirect(demoUser) };
       }
       return {
         success: false,
         error:
-          "Invalid credentials. Demo accounts: admin | principal | teacher | admissions | accounts (all use password123)",
+          "Invalid credentials. Demo accounts: admin | principal | teacher | admissions | accounts (all use password: 123456 or password123)",
       };
     }
 
-    // Live mode — POST /auth/login with { userName, password }
-    const loginPayload: LoginRequest = { userName: username, password };
+    // Live mode — POST https://escola.doorstepgarage.in/api/auth/login
+    // Payload: { username, password } (lowercase "username" — confirmed in Postman)
+    const loginPayload: LoginRequest = { username, password };
     try {
-      const res = await api.post<LoginResponse>("/auth/login", loginPayload);
+      console.log(
+        "[EscolaUI] AuthContext.login() called with username:",
+        username,
+      );
+      const res = await loginFetch(username, password);
       if (res.success && res.data) {
-        const { accessToken, refreshToken, user: dto } = res.data;
+        const data = res.data as LoginResponse;
+        const { accessToken, refreshToken, user: dto } = data;
         const user = dtoToUser(dto, dto.email ?? username);
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
@@ -283,13 +336,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated: true,
           isLoading: false,
         });
-        return { success: true, redirectTo: getLoginRedirect(user.role) };
+        console.log(
+          "[EscolaUI] Login successful, role:",
+          user.role,
+          "isPlatformAdmin:",
+          user.isPlatformAdmin,
+        );
+        return { success: true, redirectTo: getLoginRedirect(user) };
       }
+      console.error(
+        "[EscolaUI] Login failed:",
+        res.error,
+        "payload was:",
+        loginPayload,
+      );
       return {
         success: false,
         error: res.error ?? "Login failed. Please check your credentials.",
       };
-    } catch {
+    } catch (err) {
+      console.error("[EscolaUI] Login exception:", err);
       return {
         success: false,
         error: "Unable to connect to the server. Please try again.",
@@ -315,6 +381,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: false,
       isLoading: false,
     });
+    // Redirect to login — use window.location to ensure a clean navigation
+    // that works regardless of which router context we're in.
+    window.location.href = "/login";
   }, []);
 
   const refreshAccessToken = useCallback(async () => {
@@ -325,20 +394,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return true;
     }
 
-    const refreshToken = localStorage.getItem("refreshToken");
-    if (!refreshToken) return false;
+    // IMPORTANT: Must use refreshTokens() (plain fetch, no auth header).
+    // Using api.post() here would attach a Bearer token and cause an infinite 401 loop.
     try {
-      // POST /auth/refresh with { refreshToken } → { accessToken, refreshToken }
-      const res = await api.post<RefreshResponse>("/auth/refresh", {
-        refreshToken,
-      });
-      if (res.success && res.data) {
-        localStorage.setItem("accessToken", res.data.accessToken);
-        localStorage.setItem("refreshToken", res.data.refreshToken);
+      const tokens = await refreshTokens();
+      if (tokens) {
         setState((s) => ({
           ...s,
-          accessToken: res.data!.accessToken,
-          refreshToken: res.data!.refreshToken,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
         }));
         return true;
       }
@@ -347,6 +411,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     return false;
   }, []);
+
+  // Listen for programmatic logout events dispatched from the API client (e.g. 401 cascade)
+  useEffect(() => {
+    const handler = () => logout();
+    window.addEventListener("auth:logout", handler);
+    return () => window.removeEventListener("auth:logout", handler);
+  }, [logout]);
 
   return (
     <AuthContext.Provider

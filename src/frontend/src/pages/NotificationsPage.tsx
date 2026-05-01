@@ -11,14 +11,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
@@ -30,16 +22,22 @@ import {
 } from "@/lib/mockData";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   Bell,
   Building2,
   CheckCheck,
+  CheckCircle2,
+  CreditCard,
+  Info,
   Mail,
   MessageSquare,
   Send,
   Smartphone,
   Trash2,
+  X,
+  XCircle,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -54,64 +52,67 @@ type NotificationRecord = {
   recipientType?: string;
   status: "delivered" | "failed" | "pending";
   read?: boolean;
+  type?: "info" | "warning" | "success" | "error" | "payment" | "system";
 };
 
 const MOCK_HISTORY: NotificationRecord[] = [
   {
     id: "n1",
-    date: "2026-03-28",
+    date: "2026-04-20",
     title: "End-of-Term Exam Schedule",
     channel: ["SMS", "Email"],
     recipients: "All Parents",
     status: "delivered",
+    type: "info",
   },
   {
     id: "n2",
-    date: "2026-03-26",
-    title: "Fee Payment Reminder",
+    date: "2026-04-18",
+    title: "Fee Payment Reminder — Q2 Due",
     channel: ["Push", "Email"],
     recipients: "Class 10A",
     status: "delivered",
+    type: "payment",
   },
   {
     id: "n3",
-    date: "2026-03-25",
+    date: "2026-04-15",
     title: "Sports Day Announcement",
     channel: ["SMS"],
     recipients: "All Parents",
     status: "pending",
+    type: "info",
   },
   {
     id: "n4",
-    date: "2026-03-22",
-    title: "Attendance Alert — 3 Absences",
+    date: "2026-04-12",
+    title: "Attendance Alert — 3 Consecutive Absences",
     channel: ["SMS", "Push"],
     recipients: "Individual",
     status: "delivered",
+    type: "warning",
+    read: false,
   },
   {
     id: "n5",
-    date: "2026-03-20",
-    title: "Parent-Teacher Meeting",
+    date: "2026-04-10",
+    title: "Parent-Teacher Meeting — Friday 3PM",
     channel: ["Email"],
     recipients: "Class 11B",
     status: "failed",
+    type: "error",
+    read: false,
   },
   {
     id: "n6",
-    date: "2026-03-18",
-    title: "Holiday Notice",
+    date: "2026-04-08",
+    title: "Public Holiday — School Closed",
     channel: ["SMS", "Email", "Push"],
     recipients: "All Parents",
     status: "delivered",
+    type: "system",
   },
 ];
-
-const statusBadge: Record<NotificationRecord["status"], string> = {
-  delivered: "bg-success/10 text-success border-success/30",
-  failed: "bg-destructive/10 text-destructive border-destructive/30",
-  pending: "bg-warning/10 text-warning border-warning/30",
-};
 
 // Map demo admin emails to tenantId
 const DEMO_ADMIN_TENANT_MAP: Record<string, string> = {
@@ -120,7 +121,6 @@ const DEMO_ADMIN_TENANT_MAP: Record<string, string> = {
   "contact@sunriseintl.edu": "demo-sunrise",
   "hello@greenfieldhs.edu": "demo-greenfield",
   "info@riversideacademy.edu": "demo-riverside",
-  // The platform admin (admin@escola.com) maps to demo-escola for demo purposes
   "admin@escola.com": "demo-escola",
 };
 
@@ -146,30 +146,64 @@ function usePlatformNotifications(tenantId: string) {
   return useQuery<PlatformNotification[]>({
     queryKey: ["platform-notifications", tenantId],
     queryFn: async () => {
-      if (isDemoMode()) {
+      if (isDemoMode())
         return withDelay(platformAdminNotifications[tenantId] ?? []);
-      }
-      // In live mode, you'd call an endpoint; fallback to empty
       return [];
     },
   });
 }
 
-type Tab = "broadcast" | "platform";
+type FilterTab = "all" | "unread" | "payment" | "system" | "general";
+type PanelTab = "broadcast" | "platform";
+
+const iconMap = {
+  info: { Icon: Info, bg: "bg-blue-100", color: "text-blue-600" },
+  warning: { Icon: AlertTriangle, bg: "bg-amber-100", color: "text-amber-600" },
+  success: {
+    Icon: CheckCircle2,
+    bg: "bg-emerald-100",
+    color: "text-emerald-600",
+  },
+  error: { Icon: XCircle, bg: "bg-red-100", color: "text-red-600" },
+  payment: { Icon: CreditCard, bg: "bg-purple-100", color: "text-purple-600" },
+  system: { Icon: Bell, bg: "bg-slate-100", color: "text-slate-600" },
+};
+
+const statusBadge: Record<NotificationRecord["status"], string> = {
+  delivered: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  failed: "bg-red-50 text-red-700 border-red-200",
+  pending: "bg-amber-50 text-amber-700 border-amber-200",
+};
+
+function formatDate(n: NotificationRecord) {
+  return n.date ?? (n.createdAt ? n.createdAt.split("T")[0] : "–");
+}
+
+function getRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
 
 export default function NotificationsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const { data: history = [], isLoading } = useNotifications();
   const tenantId = useTenantId(user?.email);
-  const isPlatformAdmin = user?.email === "admin@escola.com";
-  // Tenant admins: role=admin but NOT the platform admin
-  const isTenantAdmin = user?.role === "admin" && !isPlatformAdmin;
-
+  const isTenantAdmin = user?.role === "principal";
   const { data: platformNotifs = [] } = usePlatformNotifications(tenantId);
   const unreadPlatformCount = platformNotifs.filter((n) => !n.read).length;
+  const unreadHistoryCount = history.filter((n) => n.read === false).length;
 
-  const [activeTab, setActiveTab] = useState<Tab>("broadcast");
+  const [panelTab, setPanelTab] = useState<PanelTab>("broadcast");
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [recipient, setRecipient] = useState("all");
@@ -177,6 +211,17 @@ export default function NotificationsPage() {
     sms: true,
     email: true,
     push: false,
+  });
+
+  const filteredHistory = history.filter((n) => {
+    if (filterTab === "all") return true;
+    if (filterTab === "unread") return n.read === false;
+    if (filterTab === "payment") return n.type === "payment";
+    if (filterTab === "system")
+      return n.type === "system" || n.type === "error";
+    if (filterTab === "general")
+      return n.type === "info" || n.type === "success";
+    return true;
   });
 
   const sendMutation = useMutation({
@@ -204,7 +249,7 @@ export default function NotificationsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      toast.success("Notification sent successfully", { description: title });
+      toast.success("Notification sent", { description: title });
       setTitle("");
       setMessage("");
     },
@@ -224,6 +269,7 @@ export default function NotificationsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["platform-notifications", tenantId] });
+      toast.success("Marked as read");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -251,109 +297,136 @@ export default function NotificationsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      toast.info("Notification deleted");
+      toast.info("Notification dismissed");
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  function formatDate(n: NotificationRecord) {
-    return n.date ?? (n.createdAt ? n.createdAt.split("T")[0] : "–");
-  }
-
-  function formatDateTime(iso: string) {
-    try {
-      return new Date(iso).toLocaleString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return iso;
-    }
-  }
+  const filterTabs: { key: FilterTab; label: string; count?: number }[] = [
+    { key: "all", label: "All", count: history.length },
+    { key: "unread", label: "Unread", count: unreadHistoryCount },
+    { key: "payment", label: "Payment Reminders" },
+    { key: "system", label: "System" },
+    { key: "general", label: "General" },
+  ];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
+      transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
       className="space-y-6"
     >
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Notifications</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Send SMS, email, and push notifications to parents and staff
-        </p>
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shadow-card"
+            style={{ background: "var(--color-primary-light)" }}
+          >
+            <Bell
+              className="w-5 h-5"
+              style={{ color: "var(--color-primary)" }}
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-display font-bold text-foreground tracking-tight">
+                Notifications
+              </h1>
+              {(unreadHistoryCount > 0 || unreadPlatformCount > 0) && (
+                <span
+                  className="badge-premium text-white text-[10px] px-2.5 py-0.5"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  {unreadHistoryCount + unreadPlatformCount} unread
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Send and manage notifications to parents and staff
+            </p>
+          </div>
+        </div>
+        {unreadHistoryCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 transition-smooth hover:shadow-card"
+            onClick={() => markAllReadMutation.mutate()}
+            disabled={markAllReadMutation.isPending}
+            data-ocid="notifications.mark_all_read.button"
+          >
+            <CheckCheck className="w-4 h-4" />
+            Mark All Read
+          </Button>
+        )}
       </div>
 
-      {/* Tabs — only show Platform tab for tenant admins */}
+      {/* Panel Tabs — only for tenant admins */}
       {isTenantAdmin && (
         <div
-          className="flex gap-1 p-1 bg-muted rounded-lg w-fit"
-          data-ocid="notifications.tabs"
+          className="flex gap-1 p-1 bg-muted/60 rounded-xl w-fit shadow-subtle"
+          data-ocid="notifications.panel.tabs"
         >
-          <button
-            type="button"
-            onClick={() => setActiveTab("broadcast")}
-            data-ocid="notifications.tab.broadcast"
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
-              activeTab === "broadcast"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Broadcast
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("platform")}
-            data-ocid="notifications.tab.platform"
-            className={`relative px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 flex items-center gap-2 ${
-              activeTab === "platform"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Platform Notifications
-            {unreadPlatformCount > 0 && (
-              <Badge className="h-4 min-w-4 px-1 text-[10px] flex items-center justify-center bg-destructive text-destructive-foreground border-0">
-                {unreadPlatformCount}
-              </Badge>
-            )}
-          </button>
+          {(["broadcast", "platform"] as PanelTab[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setPanelTab(t)}
+              data-ocid={`notifications.panel.tab.${t}`}
+              className={`relative px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                panelTab === t
+                  ? "bg-card text-foreground shadow-card"
+                  : "text-muted-foreground hover:text-foreground hover:bg-card/50"
+              }`}
+            >
+              {t === "broadcast" ? "Broadcast" : "Platform Messages"}
+              {t === "platform" && unreadPlatformCount > 0 && (
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold text-white bg-red-500">
+                  {unreadPlatformCount}
+                </span>
+              )}
+              {panelTab === t && (
+                <motion.div
+                  layoutId="panel-tab-indicator"
+                  className="absolute inset-0 rounded-lg bg-card shadow-card -z-10"
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                />
+              )}
+            </button>
+          ))}
         </div>
       )}
 
       {/* Platform Notifications Panel */}
-      {isTenantAdmin && activeTab === "platform" && (
+      {isTenantAdmin && panelTab === "platform" && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25 }}
+          transition={{ duration: 0.3 }}
           className="space-y-4"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-primary" />
+              <Building2
+                className="w-4 h-4"
+                style={{ color: "var(--color-primary)" }}
+              />
               <h2 className="font-semibold text-foreground">
                 Messages from Platform Admin
               </h2>
               {unreadPlatformCount > 0 && (
-                <Badge
-                  variant="outline"
-                  className="bg-destructive/10 text-destructive border-destructive/30 text-xs"
-                >
+                <span className="badge-premium bg-red-50 text-red-700 border border-red-200 text-[10px]">
                   {unreadPlatformCount} unread
-                </Badge>
+                </span>
               )}
             </div>
             {unreadPlatformCount > 0 && (
               <Button
                 variant="outline"
                 size="sm"
-                className="gap-1.5 text-xs h-8"
+                className="gap-1.5 text-xs h-8 transition-smooth hover:shadow-card"
                 onClick={() => markAllReadMutation.mutate()}
                 disabled={markAllReadMutation.isPending}
                 data-ocid="notifications.platform.mark_all_read.button"
@@ -365,122 +438,166 @@ export default function NotificationsPage() {
           </div>
 
           {platformNotifs.length === 0 ? (
-            <div
-              className="bg-card rounded-xl border border-border p-12 flex flex-col items-center justify-center text-center"
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-card rounded-2xl border border-border shadow-card p-16 flex flex-col items-center justify-center text-center"
               data-ocid="notifications.platform.empty_state"
             >
-              <Bell className="w-10 h-10 text-muted-foreground/40 mb-3" />
-              <p className="text-sm font-medium text-foreground">
+              <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                <Bell className="w-7 h-7 text-muted-foreground/40" />
+              </div>
+              <p className="font-semibold text-foreground">
                 No platform notifications
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 Messages from the platform admin will appear here.
               </p>
-            </div>
+            </motion.div>
           ) : (
             <div className="space-y-3">
-              {platformNotifs.map((notif, i) => (
-                <motion.div
-                  key={notif.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className={`bg-card rounded-xl border transition-all duration-150 p-4 flex gap-4 ${
-                    !notif.read
-                      ? "border-primary/30 shadow-sm"
-                      : "border-border"
-                  }`}
-                  data-ocid={`notifications.platform.item.${i + 1}`}
-                >
-                  {/* Unread indicator dot */}
-                  <div className="flex-shrink-0 pt-1">
-                    <div
-                      className={`w-2 h-2 rounded-full mt-1.5 ${
-                        !notif.read ? "bg-primary" : "bg-muted-foreground/20"
-                      }`}
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] px-1.5 py-0 bg-primary/8 text-primary border-primary/25 flex items-center gap-1"
-                        >
-                          <Building2 className="w-2.5 h-2.5" />
-                          From: Platform Admin
-                        </Badge>
-                        {!notif.read && (
-                          <span className="text-[10px] font-semibold text-primary uppercase tracking-wider">
-                            New
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
-                        {formatDateTime(notif.sentAt)}
-                      </span>
-                    </div>
-
-                    <p className="text-sm text-foreground leading-relaxed">
-                      {notif.message}
-                    </p>
-
-                    {!notif.read && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="mt-2 h-7 text-xs px-2 text-primary hover:text-primary hover:bg-primary/8"
-                        onClick={() => markReadMutation.mutate(notif.id)}
-                        disabled={markReadMutation.isPending}
-                        data-ocid={`notifications.platform.mark_read.${i + 1}.button`}
+              <AnimatePresence>
+                {platformNotifs.map((notif, i) => (
+                  <motion.div
+                    key={notif.id}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 12, height: 0 }}
+                    transition={{ delay: i * 0.06, duration: 0.3 }}
+                    className={`stagger-item relative bg-card rounded-2xl border transition-all duration-200 p-5 flex gap-4 hover:shadow-elevated ${
+                      !notif.read ? "border-l-4 shadow-card" : "border-border"
+                    }`}
+                    style={
+                      !notif.read
+                        ? { borderLeftColor: "var(--color-primary)" }
+                        : {}
+                    }
+                    data-ocid={`notifications.platform.item.${i + 1}`}
+                  >
+                    <div className="flex-shrink-0">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center shadow-subtle"
+                        style={{ background: "var(--color-primary-light)" }}
                       >
-                        <CheckCheck className="w-3 h-3 mr-1" />
-                        Mark as read
-                      </Button>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
+                        <Building2
+                          className="w-5 h-5"
+                          style={{ color: "var(--color-primary)" }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className="badge-premium text-[10px] px-2 py-0.5"
+                            style={{
+                              background: "var(--color-primary-light)",
+                              color: "var(--color-primary)",
+                            }}
+                          >
+                            Platform Admin
+                          </span>
+                          {!notif.read && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest"
+                              style={{ color: "var(--color-primary)" }}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full inline-block bg-current animate-pulse" />
+                              New
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
+                          {getRelativeTime(notif.sentAt)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-foreground leading-relaxed">
+                        {notif.message}
+                      </p>
+                      {!notif.read && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-2 h-7 text-xs px-3 transition-fast hover:shadow-subtle"
+                          style={{ color: "var(--color-primary)" }}
+                          onClick={() => markReadMutation.mutate(notif.id)}
+                          disabled={markReadMutation.isPending}
+                          data-ocid={`notifications.platform.mark_read.${i + 1}.button`}
+                        >
+                          <CheckCheck className="w-3 h-3 mr-1" />
+                          Mark as read
+                        </Button>
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           )}
         </motion.div>
       )}
 
       {/* Broadcast Panel */}
-      {(!isTenantAdmin || activeTab === "broadcast") && (
+      {(!isTenantAdmin || panelTab === "broadcast") && (
         <div className="grid lg:grid-cols-5 gap-6">
           {/* Compose Panel */}
-          <div className="lg:col-span-2 bg-card rounded-xl border border-border shadow-card p-5 space-y-4">
-            <h2 className="font-semibold text-foreground">
-              Compose Notification
-            </h2>
+          <motion.div
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1 }}
+            className="lg:col-span-2 bg-card rounded-2xl border border-border shadow-card p-6 space-y-5 hover:shadow-elevated transition-smooth"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                style={{ background: "var(--color-primary-light)" }}
+              >
+                <Send
+                  className="w-4 h-4"
+                  style={{ color: "var(--color-primary)" }}
+                />
+              </div>
+              <h2 className="font-display font-semibold text-foreground">
+                Compose Notification
+              </h2>
+            </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Title</Label>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Title
+              </Label>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Fee Payment Reminder"
+                className="input-premium"
                 data-ocid="notifications.title.input"
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Message</Label>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Message
+              </Label>
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Type your message here..."
                 rows={4}
+                className="input-premium resize-none"
                 data-ocid="notifications.message.textarea"
               />
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs">Recipients</Label>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Recipients
+              </Label>
               <Select value={recipient} onValueChange={setRecipient}>
-                <SelectTrigger data-ocid="notifications.recipients.select">
+                <SelectTrigger
+                  className="input-premium"
+                  data-ocid="notifications.recipients.select"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -492,39 +609,62 @@ export default function NotificationsPage() {
             </div>
 
             <div className="space-y-3">
-              <Label className="text-xs">Channels</Label>
-              {(
-                [
-                  { key: "sms" as const, label: "SMS", icon: MessageSquare },
-                  { key: "email" as const, label: "Email", icon: Mail },
-                  {
-                    key: "push" as const,
-                    label: "Push Notification",
-                    icon: Smartphone,
-                  },
-                ] as const
-              ).map(({ key, label, icon: Icon }) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between py-1"
-                >
-                  <div className="flex items-center gap-2">
-                    <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-sm">{label}</span>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Delivery Channels
+              </Label>
+              <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
+                {(
+                  [
+                    {
+                      key: "sms" as const,
+                      label: "SMS",
+                      desc: "Mobile text message",
+                      icon: MessageSquare,
+                    },
+                    {
+                      key: "email" as const,
+                      label: "Email",
+                      desc: "Email inbox",
+                      icon: Mail,
+                    },
+                    {
+                      key: "push" as const,
+                      label: "Push",
+                      desc: "App notification",
+                      icon: Smartphone,
+                    },
+                  ] as const
+                ).map(({ key, label, desc, icon: Icon }) => (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-fast"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center">
+                        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">{label}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {desc}
+                        </p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={channels[key]}
+                      onCheckedChange={(v) =>
+                        setChannels((c) => ({ ...c, [key]: v }))
+                      }
+                      data-ocid={`notifications.${key}.switch`}
+                    />
                   </div>
-                  <Switch
-                    checked={channels[key]}
-                    onCheckedChange={(v) =>
-                      setChannels((c) => ({ ...c, [key]: v }))
-                    }
-                    data-ocid={`notifications.${key}.switch`}
-                  />
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
 
             <Button
-              className="w-full gap-2"
+              className="w-full gap-2 btn-press transition-smooth shadow-card hover:shadow-elevated"
+              style={{ background: "var(--color-primary)" }}
               onClick={() => sendMutation.mutate()}
               disabled={sendMutation.isPending}
               data-ocid="notifications.send.button"
@@ -539,114 +679,201 @@ export default function NotificationsPage() {
                 </>
               )}
             </Button>
-          </div>
+          </motion.div>
 
-          {/* History Table */}
-          <div className="lg:col-span-3 bg-card rounded-xl border border-border shadow-card overflow-hidden">
-            <div className="p-5 border-b border-border">
-              <h2 className="font-semibold text-foreground">
-                Notification History
-              </h2>
+          {/* History Panel */}
+          <motion.div
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.15 }}
+            className="lg:col-span-3 bg-card rounded-2xl border border-border shadow-card overflow-hidden"
+          >
+            {/* Panel Header */}
+            <div className="px-6 pt-5 pb-0 border-b border-border">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-display font-semibold text-foreground">
+                  Notification History
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  {filteredHistory.length} records
+                </span>
+              </div>
+              {/* Filter Tabs */}
+              <div
+                className="flex gap-0 -mb-px overflow-x-auto scrollbar-thin"
+                data-ocid="notifications.filter.tabs"
+              >
+                {filterTabs.map(({ key, label, count }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setFilterTab(key)}
+                    data-ocid={`notifications.filter.tab.${key}`}
+                    className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-all duration-200 flex items-center gap-1.5 ${
+                      filterTab === key
+                        ? "border-current text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
+                    }`}
+                    style={
+                      filterTab === key
+                        ? {
+                            borderColor: "var(--color-primary)",
+                            color: "var(--color-primary)",
+                          }
+                        : {}
+                    }
+                  >
+                    {label}
+                    {count !== undefined && count > 0 && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                          filterTab === key
+                            ? "text-white"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                        style={
+                          filterTab === key
+                            ? { background: "var(--color-primary)" }
+                            : {}
+                        }
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <Table data-ocid="notifications.history.table">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Title</TableHead>
-                    <TableHead className="hidden md:table-cell">
-                      Channels
-                    </TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {isLoading ? (
-                    (["a", "b", "c", "d"] as const).map((k) => (
-                      <TableRow key={`sk-${k}`}>
-                        <TableCell colSpan={5}>
-                          <Skeleton className="h-8" />
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : history.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5}>
-                        <div
-                          className="text-center py-8 text-muted-foreground"
-                          data-ocid="notifications.empty_state"
-                        >
-                          <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                          <p className="text-sm">No notifications sent yet</p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    history.map((n, i) => (
-                      <TableRow
+
+            {/* Notification List */}
+            <div className="divide-y divide-border">
+              {isLoading ? (
+                (["sk-a", "sk-b", "sk-c", "sk-d"] as const).map((k) => (
+                  <div key={k} className="px-6 py-4 flex gap-4 items-start">
+                    <Skeleton className="w-10 h-10 rounded-xl flex-shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <Skeleton className="h-4 w-3/4" />
+                      <Skeleton className="h-3 w-1/2" />
+                    </div>
+                  </div>
+                ))
+              ) : filteredHistory.length === 0 ? (
+                <div
+                  className="flex flex-col items-center justify-center py-20 text-center"
+                  data-ocid="notifications.empty_state"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-3">
+                    <Bell className="w-6 h-6 text-muted-foreground/40" />
+                  </div>
+                  <p className="font-semibold text-foreground text-sm">
+                    No notifications
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {filterTab === "unread"
+                      ? "All caught up!"
+                      : "No notifications in this category"}
+                  </p>
+                </div>
+              ) : (
+                <AnimatePresence>
+                  {filteredHistory.map((n, i) => {
+                    const notifType = n.type ?? "info";
+                    const { Icon, bg, color } =
+                      iconMap[notifType] ?? iconMap.info;
+                    return (
+                      <motion.div
                         key={n.id}
-                        className={n.read === false ? "bg-primary/3" : ""}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, height: 0, overflow: "hidden" }}
+                        transition={{ delay: i * 0.04 }}
+                        className={`stagger-item table-row-hover group px-6 py-4 flex gap-4 items-start transition-all ${
+                          n.read === false ? "bg-primary/[0.03]" : ""
+                        }`}
+                        style={
+                          n.read === false
+                            ? { borderLeft: "3px solid var(--color-primary)" }
+                            : {}
+                        }
                         data-ocid={`notifications.item.${i + 1}`}
                       >
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDate(n)}
-                        </TableCell>
-                        <TableCell className="font-medium text-sm">
-                          {n.title ?? n.subject}
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          <div className="flex flex-wrap gap-1">
-                            {n.channel.map((ch) => (
-                              <Badge
+                        {/* Icon */}
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${bg}`}
+                        >
+                          <Icon className={`w-5 h-5 ${color}`} />
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <p
+                              className={`text-sm font-semibold leading-tight truncate ${
+                                n.read === false
+                                  ? "text-foreground"
+                                  : "text-foreground/80"
+                              }`}
+                            >
+                              {n.title ?? n.subject}
+                            </p>
+                            <span className="text-[11px] text-muted-foreground whitespace-nowrap flex-shrink-0">
+                              {formatDate(n)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            <span
+                              className={`badge-premium text-[10px] px-2 py-0.5 ${statusBadge[n.status]}`}
+                            >
+                              {n.status}
+                            </span>
+                            {n.channel?.map((ch) => (
+                              <span
                                 key={ch}
-                                variant="outline"
-                                className="text-[10px] px-1.5"
+                                className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium"
                               >
                                 {ch}
-                              </Badge>
+                              </span>
                             ))}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`capitalize text-xs ${statusBadge[n.status]}`}
-                          >
-                            {n.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            {n.read === false && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs px-2"
-                                onClick={() => markReadMutation.mutate(n.id)}
-                                data-ocid={`notifications.mark_read.${i + 1}.button`}
-                              >
-                                Mark read
-                              </Button>
+                            {n.recipients && (
+                              <span className="text-[11px] text-muted-foreground">
+                                → {n.recipients}
+                              </span>
                             )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex-shrink-0">
+                          {n.read === false && (
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => deleteMutation.mutate(n.id)}
-                              data-ocid={`notifications.delete.${i + 1}.delete_button`}
+                              className="h-7 text-xs px-2 hover:bg-primary/10"
+                              style={{ color: "var(--color-primary)" }}
+                              onClick={() => markReadMutation.mutate(n.id)}
+                              data-ocid={`notifications.mark_read.${i + 1}.button`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <CheckCheck className="w-3 h-3" />
                             </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-fast"
+                            onClick={() => deleteMutation.mutate(n.id)}
+                            data-ocid={`notifications.delete.${i + 1}.delete_button`}
+                            aria-label="Dismiss"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              )}
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
     </motion.div>

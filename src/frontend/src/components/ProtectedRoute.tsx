@@ -2,6 +2,19 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
+/**
+ * ProtectedRoute — enforces role-based access.
+ *
+ * Rules:
+ * - Unauthenticated → /login
+ * - requirePlatformAdmin=true  AND user.isPlatformAdmin=false → /dashboard
+ * - requirePlatformAdmin=false AND user.isPlatformAdmin=true  → /platform-admin
+ *   (platform admin must NOT access school-side pages)
+ * - allowedRoles specified AND user.role not in list          → /dashboard
+ *
+ * isPlatformAdmin is now set exclusively from the API role field in AuthContext.
+ * There is NO email-based fallback.
+ */
 export default function ProtectedRoute({
   children,
   allowedRoles,
@@ -22,24 +35,32 @@ export default function ProtectedRoute({
       return;
     }
 
-    // Platform admin routes: only the designated platform super-admin may access.
-    // Check isPlatformAdmin flag first; fall back to email for live deployments
-    // where the API may not yet return that field.
-    const isPlatformAdmin =
-      user?.isPlatformAdmin === true || user?.email === "admin@escola.com";
+    const isPlatformAdmin = user?.isPlatformAdmin === true;
+
+    // Platform admin routes: only platform admin users may enter
     if (requirePlatformAdmin && !isPlatformAdmin) {
       navigate({ to: "/dashboard" });
       return;
     }
 
-    // School-side role check
-    if (
-      !requirePlatformAdmin &&
-      allowedRoles &&
-      user &&
-      !allowedRoles.includes(user.role)
-    ) {
-      navigate({ to: "/dashboard" });
+    // Platform admin granted — skip all school-side role checks
+    if (requirePlatformAdmin && isPlatformAdmin) {
+      return;
+    }
+
+    // School-side routes: platform admin must NOT access these — redirect to their panel
+    if (!requirePlatformAdmin && isPlatformAdmin) {
+      navigate({ to: "/platform-admin" });
+      return;
+    }
+
+    // School-side role check (case-insensitive — API may return any casing)
+    if (allowedRoles && user) {
+      const normalizedRole = user.role?.toLowerCase() ?? "";
+      const normalizedAllowed = allowedRoles.map((r) => r.toLowerCase());
+      if (!normalizedAllowed.includes(normalizedRole)) {
+        navigate({ to: "/dashboard" });
+      }
     }
   }, [
     isAuthenticated,
@@ -65,19 +86,22 @@ export default function ProtectedRoute({
 
   if (!isAuthenticated) return null;
 
-  if (
-    requirePlatformAdmin &&
-    !(user?.isPlatformAdmin === true || user?.email === "admin@escola.com")
-  )
-    return null;
+  const isPlatformAdmin = user?.isPlatformAdmin === true;
 
-  if (
-    !requirePlatformAdmin &&
-    allowedRoles &&
-    user &&
-    !allowedRoles.includes(user.role)
-  ) {
-    return null;
+  // Block platform admin from entering school-side pages (and vice-versa)
+  if (requirePlatformAdmin && !isPlatformAdmin) return null;
+  if (!requirePlatformAdmin && isPlatformAdmin) return null;
+
+  // Platform admin on platform admin route — grant immediately, skip role check
+  if (requirePlatformAdmin && isPlatformAdmin) return <>{children}</>;
+
+  // Block wrong school-side roles (case-insensitive check)
+  if (allowedRoles && user) {
+    const normalizedRole = user.role?.toLowerCase() ?? "";
+    const normalizedAllowed = allowedRoles.map((r) => r.toLowerCase());
+    if (!normalizedAllowed.includes(normalizedRole)) {
+      return null;
+    }
   }
 
   return <>{children}</>;

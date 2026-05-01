@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-import { api } from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
 import { applyTheme } from "../lib/theme";
 
@@ -237,29 +236,21 @@ export function SchoolProfileProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Live mode: fetch from GET /TenantSettings/config (AllowAnonymous)
+      // Live mode: use raw fetch() with ZERO headers — AllowAnonymous endpoint.
+      // Any header (even Content-Type) can trigger a CORS preflight or 401.
       try {
-        const res = await api.get<{ success: boolean; data: TenantConfig }>(
-          "/TenantSettings/config",
+        const res = await fetch(
+          "https://escola.doorstepgarage.in/api/TenantSettings/config",
         );
-        if (res.success && res.data) {
-          const cfg = res.data as unknown as {
-            success: boolean;
-            data: TenantConfig;
-          };
-          const configData = cfg.data ?? (res.data as unknown as TenantConfig);
-          const fetched = configToProfile(configData);
-          setProfile(fetched);
-          saveToStorage(fetched);
-        } else {
-          toast.error(
-            "Could not load school configuration. Using cached data.",
-            {
-              id: "school-profile-fetch-error",
-              duration: 5000,
-            },
-          );
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
         }
+        const json = await res.json();
+        // Response shape: { success: boolean, data: TenantConfig }
+        const configData: TenantConfig = json.data ?? json;
+        const fetched = configToProfile(configData);
+        setProfile(fetched);
+        saveToStorage(fetched);
       } catch {
         toast.error(
           "Failed to connect to the server. Using cached school profile.",
@@ -291,16 +282,13 @@ export function SchoolProfileProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const res = await api.get<{ success: boolean; data: SchoolProfileData }>(
-        "/TenantSettings/profile",
+      // Raw fetch with no headers — public endpoint, no auth needed
+      const res = await fetch(
+        "https://escola.doorstepgarage.in/api/TenantSettings/profile",
       );
-      if (res.success && res.data) {
-        const profileData = res.data as unknown as {
-          success: boolean;
-          data: SchoolProfileData;
-        };
-        const d =
-          profileData.data ?? (res.data as unknown as SchoolProfileData);
+      if (res.ok) {
+        const json = await res.json();
+        const d: SchoolProfileData = json.data ?? json;
         setProfile((prev) => {
           const next = {
             ...prev,

@@ -1,125 +1,104 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  Bell,
-  CheckCircle2,
-  Eye,
-  Send,
-  Users,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useState } from "react";
+import { type Tenant, adminGetTenants, adminSendReminders } from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
-import {
-  DEMO_REMINDERS,
-  DEMO_TENANTS,
-  type PaymentReminder,
-  type PlatformNotification,
-  type SubscriptionStatus,
-  type Tenant,
-  platformAdminNotifications,
-  withDelay,
-} from "../lib/mockData";
 
-// ─── In-memory state for demo ─────────────────────────────────────────────────
+// ─── Demo data ────────────────────────────────────────────────────────────────
 
-// Mutable reference so new reminders persist across re-renders in demo mode
-const demoRemindersStore: PaymentReminder[] = [...DEMO_REMINDERS];
-
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
-function useTenants() {
-  return useQuery<Tenant[]>({
-    queryKey: ["tenants"],
-    queryFn: async () => {
-      if (isDemoMode()) return DEMO_TENANTS;
-      return DEMO_TENANTS;
-    },
-  });
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-type TenantFilter = "all" | "Overdue" | "DueSoon";
-
-const FILTER_OPTIONS: { label: string; value: TenantFilter }[] = [
-  { label: "Show All", value: "all" },
-  { label: "Overdue Only", value: "Overdue" },
-  { label: "Due Soon", value: "DueSoon" },
+const MOCK_TENANTS: Tenant[] = [
+  {
+    id: 1,
+    schoolName: "Springfield Academy",
+    adminEmail: "admin@springfield.edu",
+    subscriptionPlan: "Premium",
+    isActive: true,
+    createdAt: "2024-09-01T00:00:00Z",
+  },
+  {
+    id: 2,
+    schoolName: "Riverside Public School",
+    adminEmail: "admin@riverside.edu",
+    subscriptionPlan: "Standard",
+    isActive: true,
+    createdAt: "2024-11-15T00:00:00Z",
+  },
+  {
+    id: 3,
+    schoolName: "Lakewood International",
+    adminEmail: "admin@lakewood.edu",
+    subscriptionPlan: "Basic",
+    isActive: false,
+    createdAt: "2025-01-10T00:00:00Z",
+    outstandingAmount: 2400,
+  },
+  {
+    id: 4,
+    schoolName: "Greenhill Primary",
+    adminEmail: "admin@greenhill.edu",
+    subscriptionPlan: "Standard",
+    isActive: true,
+    createdAt: "2025-03-20T00:00:00Z",
+  },
+  {
+    id: 5,
+    schoolName: "Westbrook High School",
+    adminEmail: "admin@westbrook.edu",
+    subscriptionPlan: "Premium",
+    isActive: true,
+    createdAt: "2025-04-01T00:00:00Z",
+    outstandingAmount: 1200,
+  },
 ];
-
-const STATUS_BADGE_STYLES: Record<SubscriptionStatus, string> = {
-  Active:
-    "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  Overdue: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  DueSoon:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-  Paused: "bg-secondary text-secondary-foreground",
-};
-
-function SubscriptionStatusBadge({ status }: { status: SubscriptionStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${STATUS_BADGE_STYLES[status]}`}
-    >
-      {status === "DueSoon" ? "Due Soon" : status}
-    </span>
-  );
-}
-
-function buildMessage(tenant: Tenant): string {
-  const date = new Date(tenant.nextPaymentDate).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-  return `Dear ${tenant.schoolName} Admin,\n\nThis is a reminder that your subscription payment of $${tenant.amountDue.toLocaleString()} is due on ${date}. Please ensure timely payment to avoid service interruption.\n\nThank you.`;
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminRemindersPage() {
-  const { data: tenants = [], isLoading } = useTenants();
-  const qc = useQueryClient();
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [filter, setFilter] = useState<"all" | "overdue">("all");
 
-  const [tenantFilter, setTenantFilter] = useState<TenantFilter>("all");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [customMessage, setCustomMessage] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  const loadTenants = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (isDemoMode()) {
+        await new Promise((r) => setTimeout(r, 400));
+        setTenants(MOCK_TENANTS);
+      } else {
+        const res = await adminGetTenants(1, 100);
+        const d = res.data as { data?: Tenant[] } | null;
+        setTenants(Array.isArray(d?.data) ? d.data : []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const visibleTenants = useMemo(() => {
-    if (tenantFilter === "all") return tenants;
-    return tenants.filter((t) => t.subscriptionStatus === tenantFilter);
-  }, [tenants, tenantFilter]);
+  useEffect(() => {
+    loadTenants();
+  }, [loadTenants]);
 
-  function handleFilterChange(filter: TenantFilter) {
-    setTenantFilter(filter);
-    setSelected(new Set());
-  }
+  const visibleTenants =
+    filter === "overdue"
+      ? tenants.filter((t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive)
+      : tenants;
 
-  // Build preview message for first selected tenant
-  const firstSelected = tenants.find((t) => selected.has(t.id));
-  const previewMessage = firstSelected
-    ? customMessage || buildMessage(firstSelected)
-    : customMessage || "Select a tenant to preview the message.";
+  const allChecked =
+    visibleTenants.length > 0 && selected.size === visibleTenants.length;
+  const someChecked =
+    selected.size > 0 && selected.size < visibleTenants.length;
 
   function toggleAll() {
-    if (selected.size === visibleTenants.length && visibleTenants.length > 0) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(visibleTenants.map((t) => t.id)));
-    }
+    if (allChecked) setSelected(new Set());
+    else setSelected(new Set(visibleTenants.map((t) => t.id)));
   }
 
-  function toggleTenant(id: string) {
+  function toggleTenant(id: number) {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -128,350 +107,467 @@ export default function PlatformAdminRemindersPage() {
     });
   }
 
-  const allChecked =
-    visibleTenants.length > 0 && selected.size === visibleTenants.length;
-  const someChecked =
-    selected.size > 0 && selected.size < visibleTenants.length;
+  function selectAllOverdue() {
+    const overdueIds = tenants
+      .filter((t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive)
+      .map((t) => t.id);
+    setSelected(new Set(overdueIds));
+  }
+
+  const overdueCount = tenants.filter(
+    (t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive,
+  ).length;
 
   async function handleSend() {
     if (selected.size === 0) return;
-    setIsSending(true);
-    setSent(false);
-
-    const selectedTenants = tenants.filter((t) => selected.has(t.id));
-
-    if (isDemoMode()) {
-      await withDelay(null, 1200);
-
-      for (const tenant of selectedTenants) {
-        const msg = customMessage.trim() || buildMessage(tenant);
-        const now = new Date().toISOString();
-
-        // Add to reminder log
-        const newReminder: PaymentReminder = {
-          id: `REM-${Date.now()}-${tenant.id}`,
-          tenantId: tenant.id,
-          tenantName: tenant.schoolName,
-          recipientEmail: tenant.adminEmail,
-          message: msg,
-          sentAt: now,
-          status: "sent",
-        };
-        demoRemindersStore.unshift(newReminder);
-        DEMO_REMINDERS.unshift(newReminder);
-
-        // Add platform notification for tenant admin
-        const newNotif: PlatformNotification = {
-          id: `PNOTIF-${Date.now()}-${tenant.id}`,
-          message: `Payment reminder: ${msg.slice(0, 120)}…`,
-          sentAt: now,
-          read: false,
-          from: "platform",
-        };
-        if (!platformAdminNotifications[tenant.id]) {
-          platformAdminNotifications[tenant.id] = [];
+    const msg =
+      message.trim() ||
+      "Dear School Admin,\n\nThis is a payment reminder from EscolaUI Platform. Please ensure your subscription payment is settled at the earliest to avoid service interruption.\n\nThank you,\nEscolaUI Platform Team";
+    setSending(true);
+    setResult(null);
+    try {
+      if (isDemoMode()) {
+        await new Promise((r) => setTimeout(r, 1200));
+        setResult({
+          type: "success",
+          text: `Reminder sent to ${selected.size} school${selected.size !== 1 ? "s" : ""} successfully (demo mode)`,
+        });
+        setSelected(new Set());
+        setMessage("");
+      } else {
+        const res = await adminSendReminders(Array.from(selected), msg);
+        if (!res.success) {
+          // Graceful 404 handling — endpoint may not be implemented yet
+          const is404 =
+            res.error?.includes("Not Found") || res.error?.includes("404");
+          if (is404) {
+            setResult({
+              type: "error",
+              text: "Reminder feature not yet available on the server — contact your backend team",
+            });
+            return;
+          }
+          throw new Error(res.error ?? "Failed to send reminders");
         }
-        platformAdminNotifications[tenant.id].unshift(newNotif);
+        const count =
+          (res.data as { sentCount?: number })?.sentCount ?? selected.size;
+        setResult({
+          type: "success",
+          text: `Reminders sent to ${count} school${count !== 1 ? "s" : ""} successfully`,
+        });
+        setSelected(new Set());
+        setMessage("");
       }
-
-      setIsSending(false);
-      setSent(true);
-      setSelected(new Set());
-      setCustomMessage("");
-      qc.invalidateQueries({ queryKey: ["platform-reminders"] });
-      qc.invalidateQueries({ queryKey: ["platform-notifications"] });
-      toast.success(
-        `Reminder sent to ${selectedTenants.length} school${selectedTenants.length !== 1 ? "s" : ""}`,
-        {
-          description:
-            "In-app notifications have been delivered to all selected tenant admins.",
-        },
-      );
-      setTimeout(() => setSent(false), 4000);
-      return;
+    } catch (err) {
+      setResult({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to send reminders",
+      });
+    } finally {
+      setSending(false);
+      setTimeout(() => setResult(null), 6000);
     }
-
-    // Live API path (placeholder)
-    toast.success(
-      `Reminder sent to ${selectedTenants.length} school${selectedTenants.length !== 1 ? "s" : ""}`,
-    );
-    setIsSending(false);
-    setSelected(new Set());
-    setCustomMessage("");
   }
 
   return (
-    <div className="space-y-6" data-ocid="reminders.page">
+    <div className="space-y-7" data-ocid="reminders.page">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Bell className="w-4 h-4 text-primary" />
-          </div>
-          <h1 className="text-xl font-bold text-foreground">
-            Send Payment Reminder
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+            Send Payment Reminders
           </h1>
+          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
+            Select schools and send in-app payment reminders
+          </p>
         </div>
-        <p className="text-sm text-muted-foreground mt-1">
-          Select tenants and send in-app payment reminders with a personalized
-          message
-        </p>
+        {overdueCount > 0 && (
+          <button
+            type="button"
+            onClick={selectAllOverdue}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
+            style={{
+              background: "rgba(248,113,113,0.08)",
+              borderColor: "rgba(248,113,113,0.25)",
+              color: "#f87171",
+            }}
+            data-ocid="reminders.select_all_overdue.button"
+          >
+            ⚠ Select All Overdue ({overdueCount})
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6 items-start">
-        {/* Left: Tenant Selection */}
+      {/* Result feedback */}
+      {result && (
+        <div
+          className={`p-4 rounded-xl border text-sm font-medium ${result.type === "success" ? "bg-emerald-900/20 border-emerald-700/40 text-emerald-400" : "bg-red-900/20 border-red-700/40 text-red-400"}`}
+          data-ocid={`reminders.${result.type}_state`}
+        >
+          {result.text}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6 items-start">
+        {/* Left: school selection */}
         <div className="space-y-4">
           {/* Filter tabs */}
-          <div className="flex gap-2 flex-wrap">
-            {FILTER_OPTIONS.map((opt) => (
+          <div className="flex gap-2">
+            {[
+              {
+                label: `All Schools (${tenants.length})`,
+                value: "all" as const,
+              },
+              {
+                label: `Overdue / Inactive (${overdueCount})`,
+                value: "overdue" as const,
+              },
+            ].map((f) => (
               <button
-                key={opt.value}
+                key={f.value}
                 type="button"
-                onClick={() => handleFilterChange(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  tenantFilter === opt.value
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80"
-                }`}
-                data-ocid={`reminders.filter.${opt.value}.tab`}
+                onClick={() => {
+                  setFilter(f.value);
+                  setSelected(new Set());
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f.value ? "text-white" : "border text-gray-500 hover:text-gray-300"}`}
+                style={
+                  filter === f.value
+                    ? { background: "#4f46e5" }
+                    : { background: "#1e293b", borderColor: "#334155" }
+                }
+                data-ocid={`reminders.filter.${f.value}.tab`}
               >
-                {opt.label}
-                <span className="ml-1.5 opacity-70">
-                  (
-                  {opt.value === "all"
-                    ? tenants.length
-                    : tenants.filter((t) => t.subscriptionStatus === opt.value)
-                        .length}
-                  )
-                </span>
+                {f.label}
               </button>
             ))}
           </div>
 
-          {/* Selected count badge */}
+          {/* Selected count */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              {selected.size > 0 ? (
-                <Badge
-                  className="gap-1 text-xs"
-                  data-ocid="reminders.selected_count.badge"
+            <span
+              className="text-sm"
+              style={{ color: selected.size > 0 ? "#818cf8" : "#475569" }}
+              data-ocid="reminders.selected_count.badge"
+            >
+              {selected.size > 0
+                ? `${selected.size} school${selected.size !== 1 ? "s" : ""} selected`
+                : "No schools selected"}
+            </span>
+            {selected.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-xs transition-colors"
+                style={{ color: "#475569" }}
+                data-ocid="reminders.deselect_all.button"
+              >
+                Deselect all
+              </button>
+            )}
+          </div>
+
+          {/* School list */}
+          <div
+            className="rounded-2xl border overflow-hidden"
+            style={{ background: "#1a2234", borderColor: "#1e293b" }}
+          >
+            {/* Select all header */}
+            <div
+              className="flex items-center gap-3 px-4 py-3 border-b"
+              style={{
+                borderColor: "#1e293b",
+                background: "rgba(255,255,255,0.02)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                style={{
+                  borderColor:
+                    allChecked || someChecked ? "#6366f1" : "#334155",
+                  background: allChecked ? "#6366f1" : "transparent",
+                }}
+                aria-label="Select all schools"
+                data-ocid="reminders.select_all.checkbox"
+              >
+                {(allChecked || someChecked) && (
+                  <span
+                    style={{
+                      color: "#fff",
+                      fontSize: "9px",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {someChecked && !allChecked ? "−" : "✓"}
+                  </span>
+                )}
+              </button>
+              <span
+                className="text-sm font-medium"
+                style={{ color: "#94a3b8" }}
+              >
+                Select All ({visibleTenants.length})
+              </span>
+              {selected.size > 0 && (
+                <span
+                  className="ml-auto text-xs font-medium"
+                  style={{ color: "#6366f1" }}
                 >
-                  {selected.size} tenant{selected.size !== 1 ? "s" : ""}{" "}
-                  selected
-                </Badge>
-              ) : (
-                <span className="text-sm text-muted-foreground">
-                  No tenants selected
+                  {selected.size} selected
                 </span>
+              )}
+            </div>
+
+            {loading ? (
+              <div data-ocid="reminders.tenants.loading_state">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="flex items-center gap-3 px-4 py-3 border-b"
+                    style={{ borderColor: "#1e293b" }}
+                  >
+                    <div
+                      className="w-4 h-4 rounded animate-pulse"
+                      style={{ background: "#1e293b" }}
+                    />
+                    <div
+                      className="w-8 h-8 rounded-lg animate-pulse"
+                      style={{ background: "#1e293b" }}
+                    />
+                    <div className="flex-1 space-y-1.5">
+                      <div
+                        className="h-3.5 w-36 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                      <div
+                        className="h-3 w-24 rounded animate-pulse"
+                        style={{ background: "#1e293b" }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : visibleTenants.length === 0 ? (
+              <div
+                className="flex flex-col items-center py-10 text-center"
+                data-ocid="reminders.tenants.empty_state"
+              >
+                <p className="text-sm" style={{ color: "#475569" }}>
+                  No schools match this filter
+                </p>
+              </div>
+            ) : (
+              <div>
+                {visibleTenants.map((tenant, i) => {
+                  const isChecked = selected.has(tenant.id);
+                  return (
+                    <button
+                      key={tenant.id}
+                      type="button"
+                      onClick={() => toggleTenant(tenant.id)}
+                      className="w-full flex items-center gap-3 px-4 py-3 border-b text-left transition-colors"
+                      style={{
+                        borderColor: "#1e293b",
+                        background: isChecked
+                          ? "rgba(99,102,241,0.06)"
+                          : "transparent",
+                        borderLeft: isChecked
+                          ? "2px solid #6366f1"
+                          : "2px solid transparent",
+                      }}
+                      data-ocid={`reminders.tenant.item.${i + 1}`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                        style={{
+                          borderColor: isChecked ? "#6366f1" : "#334155",
+                          background: isChecked ? "#6366f1" : "transparent",
+                        }}
+                        data-ocid={`reminders.tenant.checkbox.${i + 1}`}
+                      >
+                        {isChecked && (
+                          <span
+                            style={{
+                              color: "#fff",
+                              fontSize: "9px",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            ✓
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
+                        style={{
+                          background:
+                            "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                        }}
+                      >
+                        {tenant.schoolName
+                          .split(" ")
+                          .map((w) => w[0])
+                          .slice(0, 2)
+                          .join("")}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="text-sm font-medium truncate"
+                          style={{ color: "#e2e8f0" }}
+                        >
+                          {tenant.schoolName}
+                        </p>
+                        <p
+                          className="text-xs truncate"
+                          style={{ color: "#475569" }}
+                        >
+                          {tenant.subscriptionPlan}
+                          {(tenant.outstandingAmount ?? 0) > 0 &&
+                            ` · Outstanding: ₹${(tenant.outstandingAmount ?? 0).toLocaleString()}`}
+                        </p>
+                      </div>
+                      {!tenant.isActive && (
+                        <span
+                          className="text-[11px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
+                          style={{
+                            background: "rgba(248,113,113,0.1)",
+                            color: "#f87171",
+                            border: "1px solid rgba(248,113,113,0.2)",
+                          }}
+                        >
+                          Inactive
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right: message + send */}
+        <div className="space-y-4 lg:sticky lg:top-6">
+          {/* Message editor */}
+          <div
+            className="rounded-2xl border overflow-hidden"
+            style={{ background: "#1a2234", borderColor: "#1e293b" }}
+          >
+            <div
+              className="px-5 py-4 border-b"
+              style={{ borderColor: "#1e293b" }}
+            >
+              <h2
+                className="text-sm font-semibold"
+                style={{ color: "#f1f5f9" }}
+              >
+                Reminder Message
+              </h2>
+              <p className="text-xs mt-0.5" style={{ color: "#475569" }}>
+                Leave blank to use a default message
+              </p>
+            </div>
+            <div className="p-5">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={6}
+                placeholder="Dear [School Name] Admin,&#10;&#10;This is a payment reminder..."
+                className="w-full rounded-lg border px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-indigo-500/40"
+                style={{
+                  background: "#0f172a",
+                  borderColor: "#334155",
+                  color: "#e2e8f0",
+                }}
+                data-ocid="reminders.message.textarea"
+              />
+              {message.length > 0 && (
+                <p
+                  className="text-xs mt-1 text-right"
+                  style={{ color: "#475569" }}
+                >
+                  {message.length} chars
+                </p>
               )}
             </div>
           </div>
 
-          <Card className="bg-card border border-border overflow-hidden">
-            {/* Select All */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-muted/20">
-              <Checkbox
-                id="select-all"
-                checked={allChecked}
-                onCheckedChange={toggleAll}
-                ref={(el) => {
-                  if (el)
-                    (
-                      el as HTMLButtonElement & { indeterminate?: boolean }
-                    ).indeterminate = someChecked;
-                }}
-                data-ocid="reminders.select_all.checkbox"
-              />
-              <Label
-                htmlFor="select-all"
-                className="text-sm font-medium cursor-pointer select-none"
+          {/* Message preview */}
+          <div
+            className="rounded-2xl border overflow-hidden"
+            style={{ background: "#0f172a", borderColor: "#1e293b" }}
+          >
+            <div
+              className="px-5 py-3 border-b"
+              style={{ borderColor: "#1e293b" }}
+            >
+              <span
+                className="text-xs font-semibold"
+                style={{ color: "#475569" }}
               >
-                Select All ({visibleTenants.length})
-              </Label>
+                Message Preview
+              </span>
             </div>
-
-            {/* Tenant list */}
-            <CardContent className="p-0">
-              {isLoading ? (
-                <div
-                  className="divide-y divide-border"
-                  data-ocid="reminders.tenants.loading_state"
-                >
-                  {[1, 2, 3].map((n) => (
-                    <div key={n} className="flex items-center gap-3 px-4 py-3">
-                      <Skeleton className="w-4 h-4 rounded" />
-                      <Skeleton className="w-8 h-8 rounded-lg" />
-                      <div className="flex-1 space-y-1">
-                        <Skeleton className="h-4 w-40" />
-                        <Skeleton className="h-3 w-32" />
-                      </div>
-                      <Skeleton className="h-5 w-16 rounded-full" />
-                    </div>
-                  ))}
-                </div>
-              ) : visibleTenants.length === 0 ? (
-                <div
-                  className="flex flex-col items-center justify-center py-12 text-center"
-                  data-ocid="reminders.tenants.empty_state"
-                >
-                  <AlertCircle className="w-8 h-8 text-muted-foreground/30 mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    No tenants match this filter
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {visibleTenants.map((tenant, i) => {
-                    const isChecked = selected.has(tenant.id);
-                    return (
-                      <button
-                        key={tenant.id}
-                        type="button"
-                        className={`w-full flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-muted/20 text-left ${
-                          isChecked ? "bg-primary/5" : ""
-                        }`}
-                        data-ocid={`reminders.tenant.item.${i + 1}`}
-                        onClick={() => toggleTenant(tenant.id)}
-                      >
-                        <Checkbox
-                          id={`tenant-cb-${tenant.id}`}
-                          checked={isChecked}
-                          onCheckedChange={() => toggleTenant(tenant.id)}
-                          data-ocid={`reminders.tenant.checkbox.${i + 1}`}
-                        />
-                        <div
-                          className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
-                          style={{ backgroundColor: tenant.primaryColor }}
-                        >
-                          {tenant.schoolName
-                            .split(" ")
-                            .map((w) => w[0])
-                            .slice(0, 2)
-                            .join("")}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {tenant.schoolName}
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {tenant.adminEmail}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-sm font-semibold text-foreground hidden sm:block">
-                            ${tenant.amountDue.toLocaleString()}
-                          </span>
-                          <SubscriptionStatusBadge
-                            status={tenant.subscriptionStatus}
-                          />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Right: Message & Send */}
-        <div className="space-y-4 lg:sticky lg:top-6">
-          {/* Message editor */}
-          <Card className="bg-card border border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold">
-                Reminder Message
-              </CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Leave blank to auto-generate a personalized message per school
-              </p>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                placeholder="Dear [School Name] Admin, This is a reminder that your subscription payment of [Amount] is due on [Date]. Please ensure timely payment to avoid service interruption. Thank you."
-                value={customMessage}
-                onChange={(e) => setCustomMessage(e.target.value)}
-                rows={6}
-                className="resize-none text-sm"
-                data-ocid="reminders.message.textarea"
-              />
-              {customMessage.length > 0 && (
-                <p className="text-xs text-muted-foreground mt-1.5 text-right">
-                  {customMessage.length} chars
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Preview */}
-          <Card className="bg-muted/30 border border-border">
-            <CardHeader className="pb-2">
-              <div className="flex items-center gap-2">
-                <Eye className="w-4 h-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-semibold text-muted-foreground">
-                  Message Preview (in-app notification)
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-lg bg-card border border-border p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                  <span className="text-xs font-semibold text-primary">
+            <div className="p-4">
+              <div
+                className="rounded-xl border p-3.5"
+                style={{ background: "#1e293b", borderColor: "#334155" }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div
+                    className="w-5 h-5 rounded flex items-center justify-center"
+                    style={{ background: "rgba(99,102,241,0.2)" }}
+                  >
+                    <span style={{ fontSize: "10px" }}>🔔</span>
+                  </div>
+                  <span
+                    className="text-xs font-semibold"
+                    style={{ color: "#818cf8" }}
+                  >
                     EscolaUI Platform
                   </span>
-                  <span className="text-[10px] text-muted-foreground ml-auto">
+                  <span
+                    className="text-[10px] ml-auto"
+                    style={{ color: "#374151" }}
+                  >
                     just now
                   </span>
                 </div>
-                <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
-                  {previewMessage}
+                <p
+                  className="text-xs leading-relaxed whitespace-pre-wrap line-clamp-5"
+                  style={{ color: "#94a3b8" }}
+                >
+                  {message.trim() ||
+                    "Dear School Admin,\n\nThis is a payment reminder from EscolaUI Platform. Please ensure your subscription payment is settled at the earliest to avoid service interruption.\n\nThank you,\nEscolaUI Platform Team"}
                 </p>
               </div>
-              <p className="text-[11px] text-muted-foreground mt-2">
-                This notification will appear in the tenant admin's notification
-                inbox.
-              </p>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Send button */}
-          <Button
-            className="w-full gap-2 h-10"
-            disabled={selected.size === 0 || isSending}
+          <button
+            type="button"
             onClick={handleSend}
+            disabled={selected.size === 0 || sending}
+            className="w-full h-11 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: selected.size > 0 && !sending ? "#4f46e5" : "#374151",
+              color: "#fff",
+            }}
             data-ocid="reminders.send.button"
           >
-            {isSending ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Sending…
-              </>
-            ) : sent ? (
-              <>
-                <CheckCircle2 className="w-4 h-4" />
-                Sent!
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4" />
-                Send Reminder
-                {selected.size > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="ml-1 text-[11px] bg-white/20 text-white border-0"
-                  >
-                    {selected.size}
-                  </Badge>
-                )}
-              </>
-            )}
-          </Button>
+            {sending
+              ? "Sending…"
+              : selected.size > 0
+                ? `Send Reminder to ${selected.size} School${selected.size !== 1 ? "s" : ""}`
+                : "Select schools to send"}
+          </button>
 
           {selected.size === 0 && (
-            <p className="text-xs text-muted-foreground text-center">
-              Select at least one tenant to send a reminder
+            <p className="text-xs text-center" style={{ color: "#374151" }}>
+              Select at least one school to send a reminder
             </p>
           )}
         </div>

@@ -4,6 +4,13 @@
 export type VirtualSession = {
   id: string;
   subject: string;
+  title?: string;
+  subjectId?: number;
+  classId?: number;
+  sectionId?: number;
+  teacherId?: number;
+  platform?: string;
+  scheduledAt?: string;
   teacher: string;
   day: string;
   time: string;

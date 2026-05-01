@@ -19,6 +19,13 @@ export default defineConfig({
     sourcemap: false,
     minify: false,
   },
+  // Allow embedding inside Caffeine editor iframes
+  preview: {
+    headers: {
+      "X-Frame-Options": "ALLOWALL",
+      "Content-Security-Policy": "frame-ancestors *",
+    },
+  },
   css: {
     postcss: "./postcss.config.js",
   },
@@ -30,6 +37,10 @@ export default defineConfig({
     },
   },
   server: {
+    headers: {
+      "X-Frame-Options": "ALLOWALL",
+      "Content-Security-Policy": "frame-ancestors *",
+    },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:4943",

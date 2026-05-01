@@ -1,7 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -10,7 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "@tanstack/react-router";
 import {
   CheckCircle,
@@ -43,12 +41,14 @@ type Step1 = {
   nationality: string;
   bloodGroup: string;
 };
+
 type Step2 = {
   grade: string;
   previousSchool: string;
   gpa: string;
   academicYear: string;
 };
+
 type Step3 = {
   documents: File[];
   father: ParentInfo;
@@ -69,28 +69,27 @@ const REQUIRED_DOCS: { name: string; description: string }[] = [
   { name: "Medical Records", description: "Immunization and health records" },
 ];
 
-const DOC_STATUS_CONFIG: Record<
-  DocStatus,
-  { label: string; className: string }
-> = {
-  pending: {
-    label: "Pending",
-    className: "bg-warning/10 text-warning border-warning/30",
-  },
-  verified: {
-    label: "Verified",
-    className: "bg-success/10 text-success border-success/30",
-  },
-  rejected: {
-    label: "Rejected",
-    className: "bg-destructive/10 text-destructive border-destructive/30",
-  },
-};
+const DOC_STATUS_CFG: Record<DocStatus, { label: string; className: string }> =
+  {
+    pending: {
+      label: "Pending",
+      className: "bg-amber-500/10 text-amber-700 border-amber-200",
+    },
+    verified: {
+      label: "Verified",
+      className: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
+    },
+    rejected: {
+      label: "Rejected",
+      className: "bg-destructive/10 text-destructive border-destructive/30",
+    },
+  };
 
 const STEPS = [
-  "Personal Information",
-  "Academic Information",
+  "Personal Info",
+  "Academic Info",
   "Documents & Contact",
+  "Review & Submit",
 ];
 
 const EMPTY_PARENT: ParentInfo = {
@@ -101,6 +100,60 @@ const EMPTY_PARENT: ParentInfo = {
   idNumber: "",
   relationship: "",
 };
+
+// ── Floating label input ──────────────────────────────────────────────────────
+
+function FloatInput({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  ocid,
+  error,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  ocid?: string;
+  error?: string;
+}) {
+  return (
+    <div>
+      <div className="relative">
+        <input
+          id={id}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? " "}
+          data-ocid={ocid}
+          className={`peer w-full h-11 rounded-xl border bg-background/60 px-3 pt-5 pb-1.5 text-sm text-foreground placeholder-transparent focus:outline-none focus:ring-1 transition-all ${error ? "border-destructive focus:border-destructive focus:ring-destructive/30" : "border-input focus:border-primary focus:ring-primary/30"}`}
+        />
+        <label
+          htmlFor={id}
+          className="absolute left-3 top-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pointer-events-none transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-sm peer-placeholder-shown:font-normal peer-placeholder-shown:normal-case peer-placeholder-shown:tracking-normal peer-focus:top-1.5 peer-focus:text-[10px] peer-focus:font-semibold peer-focus:uppercase peer-focus:tracking-wider peer-focus:text-primary"
+        >
+          {label}
+        </label>
+      </div>
+      {error && (
+        <p
+          className="text-xs text-destructive mt-1 px-1"
+          data-ocid={`application.${id}_error`}
+        >
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Parent fields ─────────────────────────────────────────────────────────────
 
 function ParentFields({
   data,
@@ -119,101 +172,163 @@ function ParentFields({
     onChange({ ...data, [field]: value });
 
   return (
-    <div className="grid grid-cols-2 gap-4 pt-2">
+    <div className="grid grid-cols-2 gap-3 pt-1">
       <div className="col-span-2">
-        <Label className="text-xs">Full Name</Label>
-        <Input
+        <FloatInput
+          id={`${prefix}-name`}
+          label="Full Name"
           value={data.name}
-          onChange={(e) => set("name", e.target.value)}
+          onChange={(v) => set("name", v)}
           placeholder="Enter full name"
-          className="mt-1 h-9"
-          data-ocid={`application.${prefix}_name.input`}
+          ocid={`application.${prefix}_name.input`}
+          error={errors[`${prefix}Name`]}
         />
-        {errors[`${prefix}Name`] && (
-          <p
-            className="text-xs text-destructive mt-1"
-            data-ocid={`application.${prefix}_name_error`}
-          >
-            {errors[`${prefix}Name`]}
+      </div>
+      <FloatInput
+        id={`${prefix}-email`}
+        label="Email"
+        type="email"
+        value={data.email}
+        onChange={(v) => set("email", v)}
+        placeholder="email@example.com"
+        ocid={`application.${prefix}_email.input`}
+      />
+      <FloatInput
+        id={`${prefix}-phone`}
+        label="Phone"
+        type="tel"
+        value={data.phone}
+        onChange={(v) => set("phone", v)}
+        placeholder="+1 234 567 8900"
+        ocid={`application.${prefix}_phone.input`}
+        error={errors[`${prefix}Phone`]}
+      />
+      <FloatInput
+        id={`${prefix}-occupation`}
+        label="Occupation"
+        value={data.occupation}
+        onChange={(v) => set("occupation", v)}
+        placeholder="e.g. Engineer"
+        ocid={`application.${prefix}_occupation.input`}
+      />
+      <FloatInput
+        id={`${prefix}-id`}
+        label="NIN / ID Number"
+        value={data.idNumber}
+        onChange={(v) => set("idNumber", v)}
+        placeholder="National ID"
+        ocid={`application.${prefix}_id.input`}
+      />
+      {showRelationshipDropdown && (
+        <div className="col-span-2 space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+            Relationship
           </p>
-        )}
-      </div>
-      <div>
-        <Label className="text-xs">Email</Label>
-        <Input
-          type="email"
-          value={data.email}
-          onChange={(e) => set("email", e.target.value)}
-          placeholder="email@example.com"
-          className="mt-1 h-9"
-          data-ocid={`application.${prefix}_email.input`}
-        />
-      </div>
-      <div>
-        <Label className="text-xs">Phone</Label>
-        <Input
-          type="tel"
-          value={data.phone}
-          onChange={(e) => set("phone", e.target.value)}
-          placeholder="+1 234 567 8900"
-          className="mt-1 h-9"
-          data-ocid={`application.${prefix}_phone.input`}
-        />
-        {errors[`${prefix}Phone`] && (
-          <p
-            className="text-xs text-destructive mt-1"
-            data-ocid={`application.${prefix}_phone_error`}
-          >
-            {errors[`${prefix}Phone`]}
-          </p>
-        )}
-      </div>
-      <div>
-        <Label className="text-xs">Occupation</Label>
-        <Input
-          value={data.occupation}
-          onChange={(e) => set("occupation", e.target.value)}
-          placeholder="e.g. Engineer"
-          className="mt-1 h-9"
-          data-ocid={`application.${prefix}_occupation.input`}
-        />
-      </div>
-      <div>
-        <Label className="text-xs">NIN / ID Number</Label>
-        <Input
-          value={data.idNumber}
-          onChange={(e) => set("idNumber", e.target.value)}
-          placeholder="National ID"
-          className="mt-1 h-9"
-          data-ocid={`application.${prefix}_id.input`}
-        />
-      </div>
-      {showRelationshipDropdown ? (
-        <div className="col-span-2">
-          <Label className="text-xs">Relationship</Label>
           <Select
             value={data.relationship}
             onValueChange={(v) => set("relationship", v)}
           >
             <SelectTrigger
-              className="mt-1 h-9"
+              className="h-11 rounded-xl"
               data-ocid={`application.${prefix}_relationship.select`}
             >
               <SelectValue placeholder="Select relationship" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="Uncle">Uncle</SelectItem>
-              <SelectItem value="Aunt">Aunt</SelectItem>
-              <SelectItem value="Grandparent">Grandparent</SelectItem>
-              <SelectItem value="Sibling">Sibling</SelectItem>
-              <SelectItem value="Other">Other</SelectItem>
+              {["Uncle", "Aunt", "Grandparent", "Sibling", "Other"].map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
+
+// ── Step progress bar ─────────────────────────────────────────────────────────
+
+function StepProgress({ current, total }: { current: number; total: number }) {
+  return (
+    <div className="bg-card rounded-2xl border border-border shadow-subtle p-5">
+      <div className="flex items-center gap-2">
+        {STEPS.map((label, i) => (
+          <div key={label} className="contents">
+            <div className="flex items-center gap-2">
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                  i < current
+                    ? "bg-emerald-500 text-white shadow-card"
+                    : i === current
+                      ? "bg-primary text-primary-foreground shadow-card"
+                      : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {i < current ? <CheckCircle className="w-4 h-4" /> : i + 1}
+              </div>
+              <span
+                className={`text-xs font-semibold hidden sm:block ${i === current ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                {label}
+              </span>
+            </div>
+            {i < total - 1 && (
+              <div
+                className={`flex-1 h-0.5 rounded-full transition-all ${i < current ? "bg-emerald-500" : "bg-border"}`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+          <motion.div
+            className="h-full bg-primary rounded-full"
+            initial={false}
+            animate={{ width: `${((current + 1) / total) * 100}%` }}
+            transition={{ type: "tween", duration: 0.35 }}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground font-medium">
+          Step {current + 1} of {total}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Review summary ────────────────────────────────────────────────────────────
+
+function ReviewCard({
+  title,
+  items,
+}: { title: string; items: { label: string; value: string }[] }) {
+  return (
+    <div className="rounded-2xl border border-border bg-muted/30 overflow-hidden">
+      <div className="px-4 py-3 bg-muted/40 border-b border-border">
+        <p className="font-display font-semibold text-foreground text-sm">
+          {title}
+        </p>
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-3">
+        {items.map(({ label, value }) => (
+          <div key={label}>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
+              {label}
+            </p>
+            <p className="text-sm font-medium text-foreground">
+              {value || "–"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function NewApplicationPage() {
   const navigate = useNavigate();
@@ -243,6 +358,9 @@ export default function NewApplicationPage() {
     guardian: { ...EMPTY_PARENT, hasGuardian: false },
     address: "",
   });
+  const [parentTab, setParentTab] = useState<"father" | "mother" | "guardian">(
+    "father",
+  );
   const [docStatuses, setDocStatuses] = useState<Record<string, DocStatus>>(
     () => Object.fromEntries(REQUIRED_DOCS.map((d) => [d.name, "pending"])),
   );
@@ -283,7 +401,6 @@ export default function NewApplicationPage() {
     if (!validateStep()) return;
     setStep((s) => s + 1);
   };
-
   const handleBack = () => {
     setErrors({});
     setStep((s) => s - 1);
@@ -310,14 +427,11 @@ export default function NewApplicationPage() {
         mother: step3.mother,
         ...(step3.guardian.hasGuardian ? { guardian: step3.guardian } : {}),
       };
-
       const result = await submitMutation.mutateAsync(payload);
       pendingApplicationId.current = result.id;
-
       toast.success("Application submitted successfully!", {
         description: `Enrollment ID: ${result.enrollmentId}`,
       });
-
       navigate({ to: "/admissions" });
     } catch (err) {
       toast.error("Submission failed", { description: (err as Error).message });
@@ -335,21 +449,10 @@ export default function NewApplicationPage() {
       setDocStatuses((prev) => ({ ...prev, [docName]: "verified" }));
       toast.success(`${docName} verified`);
     } catch {
-      // Optimistic — still mark verified for pre-submission uploads
       setDocStatuses((prev) => ({ ...prev, [docName]: "verified" }));
       toast.success(`${docName} uploaded`);
     }
   }
-
-  const FieldError = ({ name }: { name: string }) =>
-    errors[name] ? (
-      <p
-        className="text-xs text-destructive mt-1"
-        data-ocid={`application.${name}_error`}
-      >
-        {errors[name]}
-      </p>
-    ) : null;
 
   const hasParentError =
     errors.fatherName ||
@@ -360,15 +463,17 @@ export default function NewApplicationPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Back + header */}
       <div>
         <button
           type="button"
           onClick={() => navigate({ to: "/admissions" })}
-          className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 mb-4"
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-fast mb-4"
+          data-ocid="application.back_button"
         >
           <ChevronLeft className="w-4 h-4" /> Back to Admissions
         </button>
-        <h1 className="text-xl font-bold text-foreground">
+        <h1 className="text-2xl font-bold font-display text-foreground tracking-tight">
           New Student Application
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
@@ -376,488 +481,437 @@ export default function NewApplicationPage() {
         </p>
       </div>
 
-      {/* Progress Indicator */}
-      <div className="bg-card rounded-xl border border-border shadow-card p-4">
-        <div className="flex items-center gap-2">
-          {STEPS.map((label, i) => (
-            <div key={label} className="contents">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                    i < step
-                      ? "bg-success text-white"
-                      : i === step
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {i < step ? <CheckCircle className="w-4 h-4" /> : i + 1}
-                </div>
-                <span
-                  className={`text-xs font-medium hidden sm:block ${i === step ? "text-foreground" : "text-muted-foreground"}`}
-                >
-                  {label}
-                </span>
-              </div>
-              {i < STEPS.length - 1 && (
-                <div
-                  className={`flex-1 h-0.5 rounded-full transition-all ${i < step ? "bg-success" : "bg-border"}`}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Step progress */}
+      <StepProgress current={step} total={STEPS.length} />
 
       {/* Form card */}
       <div
-        className="bg-card rounded-xl border border-border shadow-card p-6"
+        className="bg-card rounded-2xl border border-border shadow-card overflow-hidden"
         data-ocid="application.modal"
       >
-        <AnimatePresence mode="wait">
-          {step === 0 && (
-            <motion.div
-              key="step0"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
-              <h2 className="font-semibold text-foreground">
-                Personal Information
-              </h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs">First Name *</Label>
-                  <Input
+        {/* Step header */}
+        <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
+          <h2 className="font-display font-semibold text-foreground text-base">
+            {STEPS[step]}
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {step === 0 && "Enter the student's personal details"}
+            {step === 1 && "Provide academic background and required documents"}
+            {step === 2 &&
+              "Parent/guardian contact information and home address"}
+            {step === 3 && "Review all information before submitting"}
+          </p>
+        </div>
+
+        <div className="p-6">
+          <AnimatePresence mode="wait">
+            {/* ── Step 0: Personal Info ── */}
+            {step === 0 && (
+              <motion.div
+                key="step0"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ type: "tween", duration: 0.25 }}
+                className="space-y-4"
+              >
+                <div className="grid grid-cols-2 gap-4">
+                  <FloatInput
+                    id="first-name"
+                    label="First Name *"
                     value={step1.firstName}
-                    onChange={(e) =>
-                      setStep1((s) => ({ ...s, firstName: e.target.value }))
-                    }
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    onChange={(v) => setStep1((s) => ({ ...s, firstName: v }))}
+                    placeholder=" "
+                    error={errors.firstName}
+                    ocid="application.first_name.input"
                   />
-                  <FieldError name="firstName" />
-                </div>
-                <div>
-                  <Label className="text-xs">Last Name *</Label>
-                  <Input
+                  <FloatInput
+                    id="last-name"
+                    label="Last Name *"
                     value={step1.lastName}
-                    onChange={(e) =>
-                      setStep1((s) => ({ ...s, lastName: e.target.value }))
-                    }
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    onChange={(v) => setStep1((s) => ({ ...s, lastName: v }))}
+                    placeholder=" "
+                    error={errors.lastName}
+                    ocid="application.last_name.input"
                   />
-                  <FieldError name="lastName" />
-                </div>
-                <div>
-                  <Label className="text-xs">Date of Birth *</Label>
-                  <Input
+                  <FloatInput
+                    id="dob"
+                    label="Date of Birth *"
                     type="date"
                     value={step1.dob}
-                    onChange={(e) =>
-                      setStep1((s) => ({ ...s, dob: e.target.value }))
-                    }
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    onChange={(v) => setStep1((s) => ({ ...s, dob: v }))}
+                    error={errors.dob}
+                    ocid="application.dob.input"
                   />
-                  <FieldError name="dob" />
-                </div>
-                <div>
-                  <Label className="text-xs">Gender *</Label>
-                  <Select
-                    value={step1.gender}
-                    onValueChange={(v) =>
-                      setStep1((s) => ({ ...s, gender: v }))
-                    }
-                  >
-                    <SelectTrigger
-                      className="mt-1 h-9"
-                      data-ocid="application.select"
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                      Gender *
+                    </p>
+                    <Select
+                      value={step1.gender}
+                      onValueChange={(v) =>
+                        setStep1((s) => ({ ...s, gender: v }))
+                      }
                     >
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="male">Male</SelectItem>
-                      <SelectItem value="female">Female</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FieldError name="gender" />
-                </div>
-                <div>
-                  <Label className="text-xs">Nationality</Label>
-                  <Input
+                      <SelectTrigger
+                        className={`h-11 rounded-xl ${errors.gender ? "border-destructive" : ""}`}
+                        data-ocid="application.gender.select"
+                      >
+                        <SelectValue placeholder="Select gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="male">Male</SelectItem>
+                        <SelectItem value="female">Female</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {errors.gender && (
+                      <p className="text-xs text-destructive px-1">
+                        {errors.gender}
+                      </p>
+                    )}
+                  </div>
+                  <FloatInput
+                    id="nationality"
+                    label="Nationality"
                     value={step1.nationality}
-                    onChange={(e) =>
-                      setStep1((s) => ({ ...s, nationality: e.target.value }))
+                    onChange={(v) =>
+                      setStep1((s) => ({ ...s, nationality: v }))
                     }
-                    placeholder="e.g. Nigerian"
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    placeholder="e.g. Indian"
+                    ocid="application.nationality.input"
                   />
-                </div>
-                <div>
-                  <Label className="text-xs">Blood Group</Label>
-                  <Select
-                    value={step1.bloodGroup}
-                    onValueChange={(v) =>
-                      setStep1((s) => ({ ...s, bloodGroup: v }))
-                    }
-                  >
-                    <SelectTrigger
-                      className="mt-1 h-9"
-                      data-ocid="application.select"
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                      Blood Group
+                    </p>
+                    <Select
+                      value={step1.bloodGroup}
+                      onValueChange={(v) =>
+                        setStep1((s) => ({ ...s, bloodGroup: v }))
+                      }
                     >
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(
-                        (bg) => (
-                          <SelectItem key={bg} value={bg}>
-                            {bg}
+                      <SelectTrigger
+                        className="h-11 rounded-xl"
+                        data-ocid="application.blood_group.select"
+                      >
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(
+                          (bg) => (
+                            <SelectItem key={bg} value={bg}>
+                              {bg}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Step 1: Academic Info + Documents ── */}
+            {step === 1 && (
+              <motion.div
+                key="step1"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ type: "tween", duration: 0.25 }}
+                className="space-y-5"
+              >
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                      Applying for Grade *
+                    </p>
+                    <Select
+                      value={step2.grade}
+                      onValueChange={(v) =>
+                        setStep2((s) => ({ ...s, grade: v }))
+                      }
+                    >
+                      <SelectTrigger
+                        className={`h-11 rounded-xl ${errors.grade ? "border-destructive" : ""}`}
+                        data-ocid="application.grade.select"
+                      >
+                        <SelectValue placeholder="Select grade" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from(
+                          { length: 12 },
+                          (_, i) => `Grade ${i + 1}`,
+                        ).map((g) => (
+                          <SelectItem key={g} value={g}>
+                            {g}
                           </SelectItem>
-                        ),
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {step === 1 && (
-            <motion.div
-              key="step1"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
-              <h2 className="font-semibold text-foreground">
-                Academic Information
-              </h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs">Applying for Grade *</Label>
-                  <Select
-                    value={step2.grade}
-                    onValueChange={(v) => setStep2((s) => ({ ...s, grade: v }))}
-                  >
-                    <SelectTrigger
-                      className="mt-1 h-9"
-                      data-ocid="application.select"
-                    >
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from(
-                        { length: 12 },
-                        (_, i) => `Grade ${i + 1}`,
-                      ).map((g) => (
-                        <SelectItem key={g} value={g}>
-                          {g}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldError name="grade" />
-                </div>
-                <div>
-                  <Label className="text-xs">Academic Year</Label>
-                  <Input
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {errors.grade && (
+                      <p className="text-xs text-destructive px-1">
+                        {errors.grade}
+                      </p>
+                    )}
+                  </div>
+                  <FloatInput
+                    id="academic-year"
+                    label="Academic Year"
                     value={step2.academicYear}
-                    onChange={(e) =>
-                      setStep2((s) => ({ ...s, academicYear: e.target.value }))
+                    onChange={(v) =>
+                      setStep2((s) => ({ ...s, academicYear: v }))
                     }
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    ocid="application.academic_year.input"
                   />
-                </div>
-                <div className="col-span-2">
-                  <Label className="text-xs">Previous School *</Label>
-                  <Input
-                    value={step2.previousSchool}
-                    onChange={(e) =>
-                      setStep2((s) => ({
-                        ...s,
-                        previousSchool: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Greenfield Academy"
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
-                  />
-                  <FieldError name="previousSchool" />
-                </div>
-                <div>
-                  <Label className="text-xs">Last Grade GPA</Label>
-                  <Input
+                  <div className="col-span-2">
+                    <FloatInput
+                      id="prev-school"
+                      label="Previous School *"
+                      value={step2.previousSchool}
+                      onChange={(v) =>
+                        setStep2((s) => ({ ...s, previousSchool: v }))
+                      }
+                      placeholder="e.g. Greenfield Academy"
+                      error={errors.previousSchool}
+                      ocid="application.previous_school.input"
+                    />
+                  </div>
+                  <FloatInput
+                    id="gpa"
+                    label="Last Grade GPA"
                     value={step2.gpa}
-                    onChange={(e) =>
-                      setStep2((s) => ({ ...s, gpa: e.target.value }))
-                    }
+                    onChange={(v) => setStep2((s) => ({ ...s, gpa: v }))}
                     placeholder="e.g. 3.8"
-                    className="mt-1 h-9"
-                    data-ocid="application.input"
+                    ocid="application.gpa.input"
                   />
                 </div>
-              </div>
 
-              {/* Document Upload Section */}
-              <div className="mt-6">
-                <h3 className="font-semibold text-foreground text-sm mb-3 flex items-center gap-2">
-                  <FileCheck className="w-4 h-4 text-primary" /> Required
-                  Documents
-                </h3>
-                <div className="space-y-3">
-                  {REQUIRED_DOCS.map((doc) => {
-                    const status = docStatuses[doc.name];
-                    const uploaded = uploadedDocs[doc.name];
-                    return (
-                      <div
-                        key={doc.name}
-                        className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/30"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {doc.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {doc.description}
-                          </p>
-                          {uploaded && (
-                            <p className="text-xs text-primary mt-0.5 truncate">
-                              {uploaded.name}
+                {/* Required documents */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+                    <FileCheck className="w-3.5 h-3.5 text-primary" /> Required
+                    Documents
+                  </p>
+                  <div className="space-y-2.5">
+                    {REQUIRED_DOCS.map((doc) => {
+                      const status = docStatuses[doc.name];
+                      const uploaded = uploadedDocs[doc.name];
+                      return (
+                        <div
+                          key={doc.name}
+                          className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/30 hover:bg-muted/50 transition-fast"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-foreground">
+                              {doc.name}
                             </p>
-                          )}
-                        </div>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] flex-shrink-0 ${DOC_STATUS_CONFIG[status].className}`}
-                        >
-                          {DOC_STATUS_CONFIG[status].label}
-                        </Badge>
-                        <label
-                          className="cursor-pointer flex-shrink-0"
-                          data-ocid="application.doc_upload.upload_button"
-                        >
-                          <div className="flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-                            <Upload className="w-3 h-3" />
-                            <span>{uploaded ? "Replace" : "Upload"}</span>
+                            <p className="text-xs text-muted-foreground">
+                              {doc.description}
+                            </p>
+                            {uploaded && (
+                              <p className="text-xs text-primary mt-0.5 truncate">
+                                {uploaded.name}
+                              </p>
+                            )}
                           </div>
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) handleDocUpload(doc.name, file);
-                            }}
-                          />
-                        </label>
-                      </div>
-                    );
-                  })}
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] flex-shrink-0 ${DOC_STATUS_CFG[status].className}`}
+                          >
+                            {DOC_STATUS_CFG[status].label}
+                          </Badge>
+                          <label
+                            className="cursor-pointer flex-shrink-0"
+                            data-ocid="application.doc_upload.upload_button"
+                          >
+                            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-fast">
+                              <Upload className="w-3 h-3" />
+                              <span>{uploaded ? "Replace" : "Upload"}</span>
+                            </div>
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept=".pdf,.jpg,.jpeg,.png"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleDocUpload(doc.name, file);
+                              }}
+                            />
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
 
-          {step === 2 && (
-            <motion.div
-              key="step2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-5"
-            >
-              <h2 className="font-semibold text-foreground">
-                Documents &amp; Contact
-              </h2>
-
-              {/* Additional document upload */}
-              <div>
-                <Label className="text-xs">
-                  Additional Documents (PDF / JPG)
-                </Label>
-                <label
-                  className="mt-1 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-lg p-6 cursor-pointer hover:bg-accent/50 transition-colors"
-                  data-ocid="application.dropzone"
-                >
-                  <Upload className="w-6 h-6 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">
-                    Click to upload additional files
-                  </span>
-                  <span className="text-xs text-muted-foreground/60">
-                    PDF, JPG up to 10MB each
-                  </span>
-                  <input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg"
-                    multiple
-                    className="hidden"
-                    onChange={(e) =>
-                      setStep3((s) => ({
-                        ...s,
-                        documents: [
-                          ...s.documents,
-                          ...Array.from(e.target.files ?? []),
-                        ],
-                      }))
-                    }
-                    data-ocid="application.upload_button"
-                  />
-                </label>
-                {step3.documents.length > 0 && (
-                  <div className="mt-2 space-y-1.5">
-                    {step3.documents.map((file, i) => (
-                      <div
-                        key={`${file.name}-${i}`}
-                        className="flex items-center gap-2 p-2 rounded-lg bg-accent text-sm"
-                      >
-                        <span className="flex-1 truncate text-foreground">
-                          {file.name}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {(file.size / 1024).toFixed(0)} KB
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setStep3((s) => ({
-                              ...s,
-                              documents: s.documents.filter((_, j) => j !== i),
-                            }))
-                          }
-                          className="text-muted-foreground hover:text-destructive"
+            {/* ── Step 2: Documents & Contact ── */}
+            {step === 2 && (
+              <motion.div
+                key="step2"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ type: "tween", duration: 0.25 }}
+                className="space-y-5"
+              >
+                {/* Additional docs dropzone */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Additional Documents (PDF / JPG)
+                  </p>
+                  <label
+                    className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-border rounded-xl p-6 cursor-pointer hover:bg-muted/40 hover:border-primary/40 transition-fast"
+                    data-ocid="application.dropzone"
+                  >
+                    <Upload className="w-6 h-6 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">
+                      Click to upload additional files
+                    </span>
+                    <span className="text-xs text-muted-foreground/60">
+                      PDF, JPG up to 10MB each
+                    </span>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg"
+                      multiple
+                      className="hidden"
+                      onChange={(e) =>
+                        setStep3((s) => ({
+                          ...s,
+                          documents: [
+                            ...s.documents,
+                            ...Array.from(e.target.files ?? []),
+                          ],
+                        }))
+                      }
+                      data-ocid="application.upload_button"
+                    />
+                  </label>
+                  {step3.documents.length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      {step3.documents.map((file, i) => (
+                        <div
+                          key={`${file.name}-${i}`}
+                          className="flex items-center gap-2 p-2 rounded-lg bg-muted/40 text-sm border border-border/50"
                         >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                          <span className="flex-1 truncate text-foreground">
+                            {file.name}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {(file.size / 1024).toFixed(0)} KB
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setStep3((s) => ({
+                                ...s,
+                                documents: s.documents.filter(
+                                  (_, j) => j !== i,
+                                ),
+                              }))
+                            }
+                            className="text-muted-foreground hover:text-destructive transition-fast"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Parent tabs */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Parent & Guardian Information
+                    </p>
+                    <span className="text-xs text-muted-foreground">
+                      At least one parent required
+                    </span>
+                  </div>
+                  {hasParentError && (
+                    <p
+                      className="text-xs text-destructive mb-3 px-1"
+                      data-ocid="application.parent_error"
+                    >
+                      At least one parent (Father or Mother) must have name and
+                      phone.
+                    </p>
+                  )}
+
+                  <div className="flex gap-1.5 mb-4">
+                    {(["father", "mother", "guardian"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setParentTab(t)}
+                        data-ocid={`application.${t}.tab`}
+                        className={`flex-1 capitalize py-2 rounded-xl text-xs font-semibold transition-fast border ${parentTab === t ? "bg-primary text-primary-foreground border-primary shadow-card" : errors[`${t}Name`] ? "border-destructive text-destructive bg-destructive/5" : "bg-muted/40 text-muted-foreground border-border hover:bg-muted"}`}
+                      >
+                        {t}
+                        {t === "guardian" && (
+                          <span className="ml-1 text-[10px] opacity-70">
+                            (Optional)
+                          </span>
+                        )}
+                      </button>
                     ))}
                   </div>
-                )}
-              </div>
 
-              {/* Parent / Guardian Tabs */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Parent &amp; Guardian Information
-                  </h3>
-                  <span className="text-xs text-muted-foreground">
-                    At least one parent required
-                  </span>
-                </div>
-
-                {hasParentError && (
-                  <p
-                    className="text-xs text-destructive mb-2"
-                    data-ocid="application.parent_error"
-                  >
-                    At least one parent (Father or Mother) must have a name and
-                    phone filled in.
-                  </p>
-                )}
-
-                <Tabs
-                  defaultValue="father"
-                  className="w-full"
-                  data-ocid="application.tab"
-                >
-                  <TabsList className="w-full grid grid-cols-3 mb-4">
-                    <TabsTrigger
-                      value="father"
-                      className={errors.fatherName ? "text-destructive" : ""}
-                      data-ocid="application.father.tab"
-                    >
-                      Father
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="mother"
-                      className={errors.motherName ? "text-destructive" : ""}
-                      data-ocid="application.mother.tab"
-                    >
-                      Mother
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="guardian"
-                      data-ocid="application.guardian.tab"
-                    >
-                      Guardian
-                      <span className="ml-1 text-[10px] text-muted-foreground font-normal">
-                        (Optional)
-                      </span>
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="father" className="mt-0">
-                    <div className="rounded-lg border border-border bg-accent/20 p-4">
+                  <div className="p-4 rounded-xl border border-border bg-muted/20">
+                    {parentTab === "father" && (
                       <ParentFields
                         data={step3.father}
-                        onChange={(updated) =>
-                          setStep3((s) => ({ ...s, father: updated }))
-                        }
+                        onChange={(u) => setStep3((s) => ({ ...s, father: u }))}
                         prefix="father"
                         errors={errors}
                       />
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="mother" className="mt-0">
-                    <div className="rounded-lg border border-border bg-accent/20 p-4">
+                    )}
+                    {parentTab === "mother" && (
                       <ParentFields
                         data={step3.mother}
-                        onChange={(updated) =>
-                          setStep3((s) => ({ ...s, mother: updated }))
-                        }
+                        onChange={(u) => setStep3((s) => ({ ...s, mother: u }))}
                         prefix="mother"
                         errors={errors}
                       />
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="guardian" className="mt-0">
-                    <div className="rounded-lg border border-border bg-accent/20 p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Checkbox
-                          id="hasGuardian"
-                          checked={step3.guardian.hasGuardian}
-                          onCheckedChange={(checked) =>
-                            setStep3((s) => ({
-                              ...s,
-                              guardian: {
-                                ...s.guardian,
-                                hasGuardian: !!checked,
-                              },
-                            }))
-                          }
-                          data-ocid="application.guardian.checkbox"
-                        />
-                        <Label
-                          htmlFor="hasGuardian"
-                          className="text-sm cursor-pointer"
-                        >
-                          Add additional guardian information
-                        </Label>
-                      </div>
-
-                      {step3.guardian.hasGuardian && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <ParentFields
-                            data={step3.guardian}
-                            onChange={(updated) =>
+                    )}
+                    {parentTab === "guardian" && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-4">
+                          <Checkbox
+                            id="hasGuardian"
+                            checked={step3.guardian.hasGuardian}
+                            onCheckedChange={(checked) =>
                               setStep3((s) => ({
                                 ...s,
                                 guardian: {
-                                  ...updated,
+                                  ...s.guardian,
+                                  hasGuardian: !!checked,
+                                },
+                              }))
+                            }
+                            data-ocid="application.guardian.checkbox"
+                          />
+                          <Label
+                            htmlFor="hasGuardian"
+                            className="text-sm cursor-pointer"
+                          >
+                            Add additional guardian information
+                          </Label>
+                        </div>
+                        {step3.guardian.hasGuardian ? (
+                          <ParentFields
+                            data={step3.guardian}
+                            onChange={(u) =>
+                              setStep3((s) => ({
+                                ...s,
+                                guardian: {
+                                  ...u,
                                   hasGuardian: s.guardian.hasGuardian,
                                 },
                               }))
@@ -866,45 +920,105 @@ export default function NewApplicationPage() {
                             errors={errors}
                             showRelationshipDropdown
                           />
-                        </motion.div>
-                      )}
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Check the box above to add an extra guardian (uncle,
+                            aunt, grandparent, etc.)
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-                      {!step3.guardian.hasGuardian && (
-                        <p className="text-xs text-muted-foreground">
-                          Check the box above to add an extra guardian (uncle,
-                          aunt, grandparent, etc.)
-                        </p>
-                      )}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </div>
-
-              {/* Shared address */}
-              <div>
-                <Label className="text-xs">Home Address *</Label>
-                <Input
+                {/* Address */}
+                <FloatInput
+                  id="home-address"
+                  label="Home Address *"
                   value={step3.address}
-                  onChange={(e) =>
-                    setStep3((s) => ({ ...s, address: e.target.value }))
-                  }
+                  onChange={(v) => setStep3((s) => ({ ...s, address: v }))}
                   placeholder="Street, City, State, Country"
-                  className="mt-1 h-9"
-                  data-ocid="application.address.input"
+                  error={errors.address}
+                  ocid="application.address.input"
                 />
-                <FieldError name="address" />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              </motion.div>
+            )}
 
-        <div className="flex items-center justify-between mt-6 pt-5 border-t border-border">
+            {/* ── Step 3: Review ── */}
+            {step === 3 && (
+              <motion.div
+                key="step3"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ type: "tween", duration: 0.25 }}
+                className="space-y-4"
+              >
+                <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-200 flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                  <div>
+                    <p className="font-display font-semibold text-foreground text-sm">
+                      Ready to Submit
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Review the details below, then click Submit Application
+                    </p>
+                  </div>
+                </div>
+
+                <ReviewCard
+                  title="Personal Information"
+                  items={[
+                    {
+                      label: "Full Name",
+                      value: `${step1.firstName} ${step1.lastName}`,
+                    },
+                    { label: "Date of Birth", value: step1.dob },
+                    { label: "Gender", value: step1.gender },
+                    { label: "Nationality", value: step1.nationality },
+                    { label: "Blood Group", value: step1.bloodGroup },
+                  ]}
+                />
+                <ReviewCard
+                  title="Academic Information"
+                  items={[
+                    { label: "Grade Applying", value: step2.grade },
+                    { label: "Academic Year", value: step2.academicYear },
+                    { label: "Previous School", value: step2.previousSchool },
+                    { label: "GPA", value: step2.gpa },
+                  ]}
+                />
+                <ReviewCard
+                  title="Parent / Guardian"
+                  items={[
+                    {
+                      label: "Father / Guardian",
+                      value: step3.father.name || step3.mother.name,
+                    },
+                    {
+                      label: "Phone",
+                      value: step3.father.phone || step3.mother.phone,
+                    },
+                    {
+                      label: "Email",
+                      value: step3.father.email || step3.mother.email,
+                    },
+                    { label: "Home Address", value: step3.address },
+                  ]}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Navigation footer */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-muted/20">
           <Button
             variant="outline"
             size="sm"
             onClick={handleBack}
             disabled={step === 0}
-            className="gap-1.5"
+            className="gap-1.5 rounded-xl"
             data-ocid="application.cancel_button"
           >
             <ChevronLeft className="w-4 h-4" /> Back
@@ -913,7 +1027,7 @@ export default function NewApplicationPage() {
             <Button
               size="sm"
               onClick={handleNext}
-              className="gap-1.5"
+              className="gap-1.5 rounded-xl btn-school-primary shadow-card"
               data-ocid="application.primary_button"
             >
               Next <ChevronRight className="w-4 h-4" />
@@ -923,7 +1037,7 @@ export default function NewApplicationPage() {
               size="sm"
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="gap-1.5"
+              className="gap-1.5 rounded-xl btn-school-primary shadow-card min-w-[10rem]"
               data-ocid="application.submit_button"
             >
               {isSubmitting ? (
@@ -932,7 +1046,7 @@ export default function NewApplicationPage() {
                 </>
               ) : (
                 <>
-                  Submit Application <CheckCircle className="w-4 h-4" />
+                  <CheckCircle className="w-4 h-4" /> Submit Application
                 </>
               )}
             </Button>

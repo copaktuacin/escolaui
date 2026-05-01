@@ -1,5 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -44,9 +52,12 @@ import {
 } from "@/lib/onlineClassesStore";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Award,
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  GraduationCap,
   Link2,
   Pencil,
   PlusCircle,
@@ -74,7 +85,6 @@ const PERIOD_LABELS: Record<number, string> = {
   6: "13:00",
 };
 
-// Subject/class options for filter dropdowns (display labels)
 const SUBJECT_OPTIONS = [
   { id: 1, name: "Mathematics" },
   { id: 2, name: "Physics" },
@@ -91,7 +101,19 @@ const CLASS_OPTIONS = [
 ];
 const TERM_OPTIONS = ["Q1", "Q2", "Q3", "Q4", "Term 1", "Term 2", "Term 3"];
 
-// ─── Online Classes Tab (unchanged from original) ─────────────────────────────
+// ─── Grade chip color helper ──────────────────────────────────────────────────
+
+function gradeColor(grade: string): string {
+  if (grade.startsWith("A"))
+    return "bg-emerald-500/10 text-emerald-600 border-emerald-300/40";
+  if (grade.startsWith("B"))
+    return "bg-sky-500/10 text-sky-600 border-sky-300/40";
+  if (grade.startsWith("C"))
+    return "bg-amber-500/10 text-amber-700 border-amber-300/40";
+  return "bg-destructive/10 text-destructive border-destructive/30";
+}
+
+// ─── Online Classes Tab ───────────────────────────────────────────────────────
 
 type NewSessionForm = {
   subject: string;
@@ -126,6 +148,13 @@ function useTeacherSessions() {
       );
     },
   });
+}
+
+function statusVariant(status: string): string {
+  if (status === "live")
+    return "bg-emerald-500/10 text-emerald-600 border-emerald-300/40";
+  if (status === "ended") return "bg-muted text-muted-foreground border-border";
+  return "bg-sky-500/10 text-sky-600 border-sky-300/40";
 }
 
 function OnlineClassesTab() {
@@ -206,11 +235,20 @@ function OnlineClassesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-        <div className="p-5 border-b border-border flex items-center gap-3">
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-4">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center"
+            style={{ background: "var(--color-primary-light)" }}
+          >
+            <Video
+              className="w-4 h-4"
+              style={{ color: "var(--color-primary)" }}
+            />
+          </div>
           <div className="flex-1">
-            <h2 className="font-semibold text-foreground flex items-center gap-2">
-              <Video className="w-4 h-4 text-primary" /> Online Class Sessions
+            <h2 className="font-semibold font-display text-foreground">
+              Online Class Sessions
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Paste meeting URLs and update session status for students
@@ -218,7 +256,8 @@ function OnlineClassesTab() {
           </div>
           <Button
             size="sm"
-            className="gap-2"
+            className="gap-2 btn-press hover-lift"
+            style={{ background: "var(--color-primary)" }}
             onClick={() => setAddOpen(true)}
             data-ocid="teacher.online_classes.open_modal_button"
           >
@@ -226,42 +265,49 @@ function OnlineClassesTab() {
           </Button>
         </div>
 
+        {/* Add Session Panel */}
         {addOpen && (
-          <div className="p-5 border-b border-border bg-muted/20 space-y-3">
-            <h3 className="text-sm font-medium">New Session</h3>
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="p-5 border-b border-border bg-muted/20 space-y-4"
+          >
+            <h3 className="text-sm font-semibold font-display text-foreground">
+              New Session
+            </h3>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Subject *</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Subject *</Label>
                 <Input
                   value={form.subject}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, subject: e.target.value }))
                   }
+                  className="input-premium"
                   placeholder="e.g. Mathematics"
-                  className="h-8 text-xs"
                   data-ocid="teacher.add_session.subject.input"
                 />
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Teacher *</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Teacher *</Label>
                 <Input
                   value={form.teacher}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, teacher: e.target.value }))
                   }
+                  className="input-premium"
                   placeholder="e.g. Mr. Adebayo"
-                  className="h-8 text-xs"
                   data-ocid="teacher.add_session.teacher.input"
                 />
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Day</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Day</Label>
                 <Select
                   value={form.day}
                   onValueChange={(v) => setForm((f) => ({ ...f, day: v }))}
                 >
                   <SelectTrigger
-                    className="h-8 text-xs"
+                    className="input-premium"
                     data-ocid="teacher.add_session.day.select"
                   >
                     <SelectValue />
@@ -275,32 +321,34 @@ function OnlineClassesTab() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Time</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Time</Label>
                 <Input
                   value={form.time}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, time: e.target.value }))
                   }
+                  className="input-premium"
                   placeholder="8:00 AM"
-                  className="h-8 text-xs"
                   data-ocid="teacher.add_session.time.input"
                 />
               </div>
-              <div className="col-span-2 space-y-1">
-                <Label className="text-xs">Meeting URL (optional)</Label>
+              <div className="col-span-2 space-y-1.5">
+                <Label className="text-xs font-semibold">
+                  Meeting URL (optional)
+                </Label>
                 <Input
                   value={form.joinLink}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, joinLink: e.target.value }))
                   }
+                  className="input-premium"
                   placeholder="https://zoom.us/j/..."
-                  className="h-8 text-xs"
                   data-ocid="teacher.add_session.joinlink.input"
                 />
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 justify-end">
               <Button
                 size="sm"
                 variant="outline"
@@ -313,24 +361,38 @@ function OnlineClassesTab() {
                 size="sm"
                 onClick={() => createMutation.mutate(form)}
                 disabled={createMutation.isPending}
+                className="btn-press"
+                style={{ background: "var(--color-primary)" }}
                 data-ocid="teacher.add_session.submit_button"
               >
                 {createMutation.isPending ? "Creating..." : "Create Session"}
               </Button>
             </div>
-          </div>
+          </motion.div>
         )}
 
         <div className="overflow-x-auto">
           <Table data-ocid="teacher.online_classes.table">
             <TableHeader>
-              <TableRow>
-                <TableHead>Subject</TableHead>
-                <TableHead className="hidden md:table-cell">Day</TableHead>
-                <TableHead className="hidden sm:table-cell">Time</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Meeting URL</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="bg-muted/20">
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Subject
+                </TableHead>
+                <TableHead className="hidden md:table-cell font-semibold text-xs uppercase tracking-wide">
+                  Day
+                </TableHead>
+                <TableHead className="hidden sm:table-cell font-semibold text-xs uppercase tracking-wide">
+                  Time
+                </TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Status
+                </TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Meeting URL
+                </TableHead>
+                <TableHead className="text-right font-semibold text-xs uppercase tracking-wide">
+                  Actions
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -338,7 +400,7 @@ function OnlineClassesTab() {
                 (["a", "b", "c"] as const).map((k) => (
                   <TableRow key={`sk-${k}`}>
                     <TableCell colSpan={6}>
-                      <Skeleton className="h-8" />
+                      <Skeleton className="h-10 rounded-lg" />
                     </TableCell>
                   </TableRow>
                 ))
@@ -346,10 +408,14 @@ function OnlineClassesTab() {
                 <TableRow>
                   <TableCell
                     colSpan={6}
-                    className="text-center text-muted-foreground text-sm py-10"
+                    className="text-center text-muted-foreground text-sm py-14"
                     data-ocid="teacher.online_classes.empty_state"
                   >
-                    No sessions yet. Click "Add Session" to get started.
+                    <Video className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
+                    <p className="font-medium">No sessions yet</p>
+                    <p className="text-xs mt-1">
+                      Click "Add Session" to get started
+                    </p>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -361,11 +427,12 @@ function OnlineClassesTab() {
                   return (
                     <TableRow
                       key={s.id}
+                      className="table-row-hover"
                       data-ocid={`teacher.online_classes.item.${i + 1}`}
                     >
                       <TableCell>
                         <div>
-                          <p className="font-medium text-sm">{s.subject}</p>
+                          <p className="font-semibold text-sm">{s.subject}</p>
                           <p className="text-xs text-muted-foreground md:hidden">
                             {s.day}
                           </p>
@@ -388,7 +455,7 @@ function OnlineClassesTab() {
                           }
                         >
                           <SelectTrigger
-                            className="h-7 text-xs w-28"
+                            className={`h-7 text-xs w-28 border rounded-full px-3 ${statusVariant(s.status)}`}
                             data-ocid={`teacher.online_classes.status.${i + 1}.select`}
                           >
                             <SelectValue />
@@ -413,14 +480,14 @@ function OnlineClassesTab() {
                                 }))
                               }
                               placeholder="No URL set"
-                              className="h-7 text-xs pl-7"
+                              className="h-7 text-xs pl-7 input-premium"
                               data-ocid={`teacher.online_classes.url.${i + 1}.input`}
                             />
                           </div>
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-7 w-7 p-0 flex-shrink-0"
+                            className="h-7 w-7 p-0 flex-shrink-0 hover:bg-primary/10"
                             onClick={() => handleLinkSave(s.id)}
                             data-ocid={`teacher.online_classes.save_url.${i + 1}.button`}
                           >
@@ -434,7 +501,7 @@ function OnlineClassesTab() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 w-7 p-0"
+                              className="h-7 w-7 p-0 hover:bg-primary/10 hover:text-primary"
                               onClick={() =>
                                 window.open(
                                   s.joinLink,
@@ -482,29 +549,38 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / limit);
 
-  function handleSearchChange(val: string) {
-    setSearch(val);
-    setPage(1);
-  }
-
   return (
-    <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-      <div className="p-5 border-b border-border flex items-center gap-3">
-        <h2 className="font-semibold text-foreground flex-1 flex items-center gap-2">
-          <Users className="w-4 h-4 text-primary" /> Teachers
-          {total > 0 && (
-            <Badge variant="secondary" className="text-xs">
-              {total}
-            </Badge>
-          )}
-        </h2>
+    <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+      <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-4">
+        <div
+          className="w-9 h-9 rounded-xl flex items-center justify-center"
+          style={{ background: "var(--color-primary-light)" }}
+        >
+          <Users
+            className="w-4 h-4"
+            style={{ color: "var(--color-primary)" }}
+          />
+        </div>
+        <div className="flex-1">
+          <h2 className="font-semibold font-display text-foreground flex items-center gap-2">
+            Teachers
+            {total > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {total}
+              </Badge>
+            )}
+          </h2>
+        </div>
         <div className="relative w-56">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
-            onChange={(e) => handleSearchChange(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             placeholder="Search name or code…"
-            className="pl-8 h-8 text-xs"
+            className="pl-8 h-8 text-xs input-premium"
             data-ocid="teacher.list.search_input"
           />
         </div>
@@ -513,14 +589,22 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
       <div className="overflow-x-auto">
         <Table data-ocid="teacher.list.table">
           <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Employee Code</TableHead>
-              <TableHead className="hidden md:table-cell">
+            <TableRow className="bg-muted/20">
+              <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                Name
+              </TableHead>
+              <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                Employee Code
+              </TableHead>
+              <TableHead className="hidden md:table-cell font-semibold text-xs uppercase tracking-wide">
                 Qualification
               </TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Details</TableHead>
+              <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                Status
+              </TableHead>
+              <TableHead className="text-right font-semibold text-xs uppercase tracking-wide">
+                Details
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -528,7 +612,7 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
               [1, 2, 3, 4, 5].map((k) => (
                 <TableRow key={k}>
                   <TableCell colSpan={5}>
-                    <Skeleton className="h-8" />
+                    <Skeleton className="h-10 rounded-lg" />
                   </TableCell>
                 </TableRow>
               ))
@@ -536,19 +620,33 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
               <TableRow>
                 <TableCell
                   colSpan={5}
-                  className="text-center text-muted-foreground text-sm py-10"
+                  className="text-center text-muted-foreground text-sm py-14"
                   data-ocid="teacher.list.empty_state"
                 >
-                  No teachers found.
+                  <Users className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
+                  <p className="font-medium">No teachers found</p>
                 </TableCell>
               </TableRow>
             ) : (
               teachers.map((t, i) => (
                 <TableRow
                   key={t.teacherId}
+                  className="table-row-hover"
                   data-ocid={`teacher.list.item.${i + 1}`}
                 >
-                  <TableCell className="font-medium">{t.fullName}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground flex-shrink-0"
+                        style={{ background: "var(--color-primary)" }}
+                      >
+                        {t.fullName[0]?.toUpperCase()}
+                      </div>
+                      <span className="font-semibold text-sm">
+                        {t.fullName}
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {t.employeeCode}
                   </TableCell>
@@ -556,22 +654,21 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
                     {t.qualification ?? "—"}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={`text-xs ${t.status === "Active" ? "bg-success/10 text-success border-success/30" : "bg-muted text-muted-foreground"}`}
+                    <span
+                      className={`badge-premium border text-xs ${t.status === "Active" ? "bg-emerald-500/10 text-emerald-600 border-emerald-300/40" : "bg-muted text-muted-foreground border-border"}`}
                     >
                       {t.status}
-                    </Badge>
+                    </span>
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-xs gap-1"
+                      className="h-7 text-xs gap-1 hover:bg-primary/10 hover:text-primary"
                       onClick={() => onSelect(t.teacherId)}
                       data-ocid={`teacher.list.view.${i + 1}.button`}
                     >
-                      View
+                      View Details
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -582,7 +679,7 @@ function TeacherList({ onSelect }: { onSelect: (id: number) => void }) {
       </div>
 
       {totalPages > 1 && (
-        <div className="p-3 border-t border-border flex items-center justify-between">
+        <div className="p-3 border-t border-border flex items-center justify-between bg-muted/10">
           <span className="text-xs text-muted-foreground">
             Page {page} of {totalPages}
           </span>
@@ -624,7 +721,7 @@ function TeacherDetail({
 
   if (isLoading) {
     return (
-      <div className="bg-card rounded-xl border border-border shadow-card p-6 space-y-3">
+      <div className="bg-card rounded-2xl border border-border shadow-card p-6 space-y-3">
         <Skeleton className="h-6 w-48" />
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-32 w-full" />
@@ -634,66 +731,78 @@ function TeacherDetail({
   if (!teacher) return null;
 
   return (
-    <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-      <div className="p-5 border-b border-border flex items-center gap-3">
+    <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+      <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-3">
         <Button
           size="sm"
           variant="ghost"
           onClick={onBack}
-          className="gap-1 -ml-1"
+          className="gap-1 -ml-1 hover:bg-primary/10 hover:text-primary"
           data-ocid="teacher.detail.back_button"
         >
           <ChevronLeft className="w-4 h-4" /> Back
         </Button>
+        <Separator orientation="vertical" className="h-5" />
+        <div
+          className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-primary-foreground flex-shrink-0"
+          style={{ background: "var(--color-primary)" }}
+        >
+          {teacher.fullName[0]?.toUpperCase()}
+        </div>
         <div className="flex-1 min-w-0">
-          <h2 className="font-semibold text-foreground truncate">
+          <h2 className="font-semibold font-display text-foreground truncate">
             {teacher.fullName}
           </h2>
           <p className="text-xs text-muted-foreground">
             {teacher.employeeCode} · Joined {teacher.joinDate ?? "—"}
           </p>
         </div>
-        <Badge
-          variant="outline"
-          className={`text-xs ${teacher.status === "Active" ? "bg-success/10 text-success border-success/30" : "bg-muted text-muted-foreground"}`}
+        <span
+          className={`badge-premium border text-xs ${teacher.status === "Active" ? "bg-emerald-500/10 text-emerald-600 border-emerald-300/40" : "bg-muted text-muted-foreground"}`}
         >
           {teacher.status}
-        </Badge>
+        </span>
       </div>
 
       <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Info */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Profile</h3>
-          <dl className="space-y-2">
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold font-display text-foreground flex items-center gap-2">
+            <GraduationCap className="w-4 h-4 text-primary" /> Profile
+          </h3>
+          <dl className="space-y-3">
             {[
               { label: "Qualification", value: teacher.qualification },
               { label: "User ID", value: String(teacher.userId) },
               { label: "Employee Code", value: teacher.employeeCode },
               { label: "Join Date", value: teacher.joinDate },
             ].map(({ label, value }) => (
-              <div key={label} className="flex gap-2 text-sm">
-                <dt className="text-muted-foreground w-32 flex-shrink-0">
+              <div key={label} className="flex gap-3 items-start">
+                <dt className="text-xs text-muted-foreground w-32 flex-shrink-0 pt-0.5">
                   {label}
                 </dt>
-                <dd className="font-medium">{value ?? "—"}</dd>
+                <dd className="font-medium text-sm text-foreground">
+                  {value ?? "—"}
+                </dd>
               </div>
             ))}
           </dl>
 
-          <div className="pt-2">
+          <div className="pt-1">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Subjects Assigned
             </h4>
             <div className="flex flex-wrap gap-1.5">
               {teacher.subjects.length > 0 ? (
                 teacher.subjects.map((s) => (
-                  <Badge key={s} variant="secondary" className="text-xs">
+                  <span
+                    key={s}
+                    className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20"
+                  >
                     {s}
-                  </Badge>
+                  </span>
                 ))
               ) : (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground italic">
                   No subjects assigned
                 </span>
               )}
@@ -701,29 +810,35 @@ function TeacherDetail({
           </div>
         </div>
 
-        {/* Roster */}
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            Student Roster
+          <h3 className="text-sm font-semibold font-display text-foreground flex items-center gap-2">
+            <Users className="w-4 h-4 text-primary" /> Student Roster
           </h3>
           {teacher.roster.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground italic">
               No students assigned.
             </p>
           ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
+            <div className="rounded-xl border border-border overflow-hidden">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Student</TableHead>
-                    <TableHead className="text-xs">Class</TableHead>
-                    <TableHead className="text-xs">Section</TableHead>
+                  <TableRow className="bg-muted/30">
+                    <TableHead className="text-xs font-semibold">
+                      Student
+                    </TableHead>
+                    <TableHead className="text-xs font-semibold">
+                      Class
+                    </TableHead>
+                    <TableHead className="text-xs font-semibold">
+                      Section
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {teacher.roster.map((r, i) => (
                     <TableRow
                       key={r.studentId}
+                      className="table-row-hover"
                       data-ocid={`teacher.detail.roster.item.${i + 1}`}
                     >
                       <TableCell className="text-sm font-medium">
@@ -764,145 +879,211 @@ function GradebookTab({ teacherId }: { teacherId: number }) {
   const entries = data?.data ?? [];
 
   return (
-    <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-      <div className="p-5 border-b border-border flex flex-wrap items-center gap-3">
-        <h2 className="font-semibold text-foreground flex items-center gap-2 flex-1">
-          <BookOpen className="w-4 h-4 text-primary" /> Gradebook
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          <Select
-            value={String(filterClass ?? "")}
-            onValueChange={(v) => setFilterClass(v ? Number(v) : undefined)}
+    <div className="space-y-4">
+      {/* Summary strip */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Students", value: entries.length, icon: Users },
+          {
+            label: "A Grades",
+            value: entries.filter((e) => e.grade.startsWith("A")).length,
+            icon: Award,
+          },
+          {
+            label: "Avg Score",
+            value:
+              entries.length > 0
+                ? Math.round(
+                    entries.reduce(
+                      (sum, e) =>
+                        sum + (e.marks[e.marks.length - 1]?.score ?? 0),
+                      0,
+                    ) / entries.length,
+                  )
+                : "—",
+            icon: BookOpen,
+          },
+        ].map(({ label, value, icon: Icon }) => (
+          <div
+            key={label}
+            className="bg-card rounded-xl border border-border p-4 shadow-card flex items-center gap-3"
           >
-            <SelectTrigger
-              className="w-28 h-8 text-xs"
-              data-ocid="teacher.gradebook.class.select"
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: "var(--color-primary-light)" }}
             >
-              <SelectValue placeholder="All Classes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">All Classes</SelectItem>
-              {CLASS_OPTIONS.map((c) => (
-                <SelectItem key={c.id} value={String(c.id)}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={String(filterSubject ?? "")}
-            onValueChange={(v) => setFilterSubject(v ? Number(v) : undefined)}
-          >
-            <SelectTrigger
-              className="w-32 h-8 text-xs"
-              data-ocid="teacher.gradebook.subject.select"
-            >
-              <SelectValue placeholder="All Subjects" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">All Subjects</SelectItem>
-              {SUBJECT_OPTIONS.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filterTerm ?? ""}
-            onValueChange={(v) => setFilterTerm(v || undefined)}
-          >
-            <SelectTrigger
-              className="w-24 h-8 text-xs"
-              data-ocid="teacher.gradebook.term.select"
-            >
-              <SelectValue placeholder="All Terms" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">All Terms</SelectItem>
-              {TERM_OPTIONS.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+              <Icon
+                className="w-4 h-4"
+                style={{ color: "var(--color-primary)" }}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="font-bold text-lg text-foreground leading-none">
+                {value}
+              </p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="overflow-x-auto">
-        <Table data-ocid="teacher.gradebook.table">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Student</TableHead>
-              <TableHead>Marks per Term</TableHead>
-              <TableHead className="text-right">Grade</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              [1, 2, 3, 4].map((k) => (
-                <TableRow key={k}>
-                  <TableCell colSpan={3}>
-                    <Skeleton className="h-8" />
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : entries.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={3}
-                  className="text-center text-muted-foreground text-sm py-10"
-                  data-ocid="teacher.gradebook.empty_state"
-                >
-                  No gradebook data for the selected filters.
-                </TableCell>
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 flex-1">
+            <BookOpen className="w-4 h-4 text-primary" />
+            <h2 className="font-semibold font-display text-foreground">
+              Gradebook
+            </h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Select
+              value={String(filterClass ?? "")}
+              onValueChange={(v) => setFilterClass(v ? Number(v) : undefined)}
+            >
+              <SelectTrigger
+                className="w-28 h-8 text-xs input-premium"
+                data-ocid="teacher.gradebook.class.select"
+              >
+                <SelectValue placeholder="All Classes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Classes</SelectItem>
+                {CLASS_OPTIONS.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={String(filterSubject ?? "")}
+              onValueChange={(v) => setFilterSubject(v ? Number(v) : undefined)}
+            >
+              <SelectTrigger
+                className="w-32 h-8 text-xs input-premium"
+                data-ocid="teacher.gradebook.subject.select"
+              >
+                <SelectValue placeholder="All Subjects" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Subjects</SelectItem>
+                {SUBJECT_OPTIONS.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={filterTerm ?? ""}
+              onValueChange={(v) => setFilterTerm(v || undefined)}
+            >
+              <SelectTrigger
+                className="w-24 h-8 text-xs input-premium"
+                data-ocid="teacher.gradebook.term.select"
+              >
+                <SelectValue placeholder="All Terms" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">All Terms</SelectItem>
+                {TERM_OPTIONS.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <Table data-ocid="teacher.gradebook.table">
+            <TableHeader>
+              <TableRow className="bg-muted/20">
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Student
+                </TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Marks per Term
+                </TableHead>
+                <TableHead className="text-right font-semibold text-xs uppercase tracking-wide">
+                  Grade
+                </TableHead>
               </TableRow>
-            ) : (
-              entries.map((entry, i) => (
-                <TableRow
-                  key={entry.studentId}
-                  data-ocid={`teacher.gradebook.item.${i + 1}`}
-                >
-                  <TableCell className="font-medium">
-                    {entry.studentName}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      {entry.marks.map((m) => (
-                        <span
-                          key={m.term}
-                          className="inline-flex items-center gap-1 text-xs bg-muted/60 rounded px-2 py-0.5"
-                        >
-                          <span className="text-muted-foreground">
-                            {m.term}:
-                          </span>
-                          <span className="font-semibold">{m.score}</span>
-                        </span>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Badge
-                      variant="outline"
-                      className={`text-xs font-bold ${
-                        entry.grade.startsWith("A")
-                          ? "bg-success/10 text-success border-success/30"
-                          : entry.grade.startsWith("B")
-                            ? "bg-primary/10 text-primary border-primary/30"
-                            : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {entry.grade}
-                    </Badge>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                [1, 2, 3, 4].map((k) => (
+                  <TableRow key={k}>
+                    <TableCell colSpan={3}>
+                      <Skeleton className="h-10 rounded-lg" />
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : entries.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={3}
+                    className="text-center text-muted-foreground text-sm py-14"
+                    data-ocid="teacher.gradebook.empty_state"
+                  >
+                    <BookOpen className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
+                    <p className="font-medium">No gradebook data</p>
+                    <p className="text-xs mt-1">Try adjusting the filters</p>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              ) : (
+                entries.map((entry, i) => (
+                  <TableRow
+                    key={entry.studentId}
+                    className="table-row-hover stagger-item"
+                    data-ocid={`teacher.gradebook.item.${i + 1}`}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-primary-foreground"
+                          style={{ background: "var(--color-primary)" }}
+                        >
+                          {entry.studentName[0]?.toUpperCase()}
+                        </div>
+                        <span className="font-medium text-sm">
+                          {entry.studentName}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-2">
+                        {entry.marks.map((m) => (
+                          <span
+                            key={m.term}
+                            className="inline-flex items-center gap-1 text-xs rounded-lg px-2 py-1 bg-muted/60 border border-border"
+                          >
+                            <span className="text-muted-foreground">
+                              {m.term}:
+                            </span>
+                            <span className="font-bold text-foreground">
+                              {m.score}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span
+                        className={`badge-premium border text-xs font-bold ${gradeColor(entry.grade)}`}
+                      >
+                        {entry.grade}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
     </div>
   );
@@ -948,7 +1129,7 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
     topic: string;
   } | null>(null);
   const [lpForm, setLpForm] = useState<LessonPlanFormState>(EMPTY_LP_FORM);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   const createLessonPlan = useCreateLessonPlan();
 
@@ -984,7 +1165,7 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
         onSuccess: (data) => {
           toast.success(`Lesson plan created (ID: ${data.lessonPlanId})`);
           setLpForm(EMPTY_LP_FORM);
-          setShowCreateForm(false);
+          setShowCreateDialog(false);
         },
         onError: (e) => toast.error((e as Error).message),
       },
@@ -992,159 +1173,71 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Create Form */}
-      <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-        <div className="p-5 border-b border-border flex items-center gap-3">
-          <h2 className="font-semibold text-foreground flex-1">
-            Create Lesson Plan
-          </h2>
+    <div className="space-y-5">
+      {/* Lesson Plan List header */}
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-4">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center"
+            style={{ background: "var(--color-primary-light)" }}
+          >
+            <BookOpen
+              className="w-4 h-4"
+              style={{ color: "var(--color-primary)" }}
+            />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-semibold font-display text-foreground">
+              Lesson Plans
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Create and manage structured lesson plans via API
+            </p>
+          </div>
           <Button
             size="sm"
-            variant={showCreateForm ? "outline" : "default"}
-            className="gap-2"
-            onClick={() => setShowCreateForm((v) => !v)}
+            className="gap-2 btn-press hover-lift"
+            style={{ background: "var(--color-primary)" }}
+            onClick={() => setShowCreateDialog(true)}
             data-ocid="teacher.lesson_plan.toggle_button"
           >
-            <PlusCircle className="w-4 h-4" />
-            {showCreateForm ? "Cancel" : "New Plan"}
+            <PlusCircle className="w-4 h-4" /> New Lesson Plan
           </Button>
         </div>
 
-        {showCreateForm && (
-          <form onSubmit={handleLpSubmit} className="p-5 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Subject *</Label>
-                <Select
-                  value={lpForm.subjectId}
-                  onValueChange={(v) =>
-                    setLpForm((f) => ({ ...f, subjectId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="h-8 text-xs"
-                    data-ocid="teacher.lesson_plan.subject.select"
-                  >
-                    <SelectValue placeholder="Select subject" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SUBJECT_OPTIONS.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        {/* Preview cards of current week */}
+        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {Object.entries(initialLessons).map(([key, lesson], i) => (
+            <motion.div
+              key={key}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.06 }}
+              className="bg-muted/30 rounded-xl border border-border p-3 space-y-1 hover-lift cursor-pointer"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-mono text-muted-foreground">
+                  {key.replace("-", " · P")}
+                </span>
+                <Clock className="w-3 h-3 text-muted-foreground/50" />
               </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Class *</Label>
-                <Select
-                  value={lpForm.classId}
-                  onValueChange={(v) =>
-                    setLpForm((f) => ({ ...f, classId: v }))
-                  }
-                >
-                  <SelectTrigger
-                    className="h-8 text-xs"
-                    data-ocid="teacher.lesson_plan.class.select"
-                  >
-                    <SelectValue placeholder="Select class" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CLASS_OPTIONS.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Lesson Date *</Label>
-                <Input
-                  type="date"
-                  value={lpForm.lessonDate}
-                  onChange={(e) =>
-                    setLpForm((f) => ({ ...f, lessonDate: e.target.value }))
-                  }
-                  className="h-8 text-xs"
-                  data-ocid="teacher.lesson_plan.date.input"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Learning Objectives</Label>
-              <Textarea
-                value={lpForm.objectives}
-                onChange={(e) =>
-                  setLpForm((f) => ({ ...f, objectives: e.target.value }))
-                }
-                placeholder="e.g. Students will understand quadratic equations and their applications"
-                className="min-h-[72px] text-xs resize-none"
-                data-ocid="teacher.lesson_plan.objectives.textarea"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Lesson Content</Label>
-              <Textarea
-                value={lpForm.content}
-                onChange={(e) =>
-                  setLpForm((f) => ({ ...f, content: e.target.value }))
-                }
-                placeholder="e.g. Introduction to ax² + bx + c = 0, graphical solutions, worked examples"
-                className="min-h-[72px] text-xs resize-none"
-                data-ocid="teacher.lesson_plan.content.textarea"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Resources</Label>
-              <Input
-                value={lpForm.resources}
-                onChange={(e) =>
-                  setLpForm((f) => ({ ...f, resources: e.target.value }))
-                }
-                placeholder="e.g. Textbook chapter 4, Graph paper, Calculator"
-                className="h-8 text-xs"
-                data-ocid="teacher.lesson_plan.resources.input"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setLpForm(EMPTY_LP_FORM);
-                  setShowCreateForm(false);
-                }}
-                data-ocid="teacher.lesson_plan.cancel_button"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={createLessonPlan.isPending}
-                data-ocid="teacher.lesson_plan.submit_button"
-              >
-                {createLessonPlan.isPending ? "Saving…" : "Save Lesson Plan"}
-              </Button>
-            </div>
-          </form>
-        )}
+              <p className="text-sm font-semibold text-foreground leading-tight">
+                {lesson?.subject}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {lesson?.topic}
+              </p>
+            </motion.div>
+          ))}
+        </div>
       </div>
 
       {/* Weekly Timetable Grid */}
-      <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-        <div className="p-5 border-b border-border">
-          <h2 className="font-semibold text-foreground">Weekly Planner</h2>
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20">
+          <h2 className="font-semibold font-display text-foreground">
+            Weekly Planner Grid
+          </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Click a cell to add or edit a lesson entry
           </p>
@@ -1154,13 +1247,13 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
             className="grid min-w-[640px]"
             style={{ gridTemplateColumns: "80px repeat(5, 1fr)" }}
           >
-            <div className="bg-muted/40 border-b border-r border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            <div className="bg-muted/40 border-b border-r border-border px-3 py-2.5 text-xs font-semibold text-muted-foreground">
               Period
             </div>
             {DAYS.map((d) => (
               <div
                 key={d}
-                className="bg-muted/40 border-b border-r last:border-r-0 border-border px-3 py-2 text-center text-xs font-bold text-foreground"
+                className="bg-muted/40 border-b border-r last:border-r-0 border-border px-3 py-2.5 text-center text-xs font-bold text-foreground"
               >
                 {d}
               </div>
@@ -1171,7 +1264,9 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                   key={`p-${period}`}
                   className="border-b border-r border-border px-2 py-3 flex flex-col items-center justify-center bg-muted/20"
                 >
-                  <span className="text-xs font-bold">{period}</span>
+                  <span className="text-xs font-bold text-foreground">
+                    {period}
+                  </span>
                   <span className="text-[10px] text-muted-foreground">
                     {PERIOD_LABELS[period]}
                   </span>
@@ -1185,8 +1280,18 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                       className="border-b border-r last:border-r-0 border-border min-h-[72px] p-1"
                     >
                       {lesson ? (
-                        <div className="h-full rounded-md bg-primary/5 border border-primary/20 p-2 flex flex-col justify-between">
-                          <p className="text-xs font-semibold text-primary leading-tight">
+                        <div
+                          className="h-full rounded-lg p-2 flex flex-col justify-between transition-all hover:shadow-card"
+                          style={{
+                            background: "var(--color-primary-light)",
+                            borderColor: "var(--color-primary)",
+                            border: "1px solid",
+                          }}
+                        >
+                          <p
+                            className="text-xs font-semibold leading-tight"
+                            style={{ color: "var(--color-primary)" }}
+                          >
                             {lesson.subject}
                           </p>
                           <p className="text-[10px] text-muted-foreground">
@@ -1196,7 +1301,8 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
-                                className="text-[10px] text-primary/60 hover:text-primary underline text-left"
+                                className="text-[10px] underline text-left transition-colors"
+                                style={{ color: "var(--color-primary)" }}
                                 onClick={() =>
                                   setEditLesson({
                                     key,
@@ -1210,45 +1316,53 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                               </button>
                             </PopoverTrigger>
                             <PopoverContent
-                              className="w-60"
+                              className="w-60 shadow-floating"
                               data-ocid="teacher.planner.popover"
                             >
                               <div className="space-y-3">
-                                <Label className="text-xs">Subject</Label>
-                                <Input
-                                  value={
-                                    editLesson?.key === key
-                                      ? editLesson.subject
-                                      : lesson.subject
-                                  }
-                                  onChange={(e) =>
-                                    setEditLesson((el) =>
-                                      el
-                                        ? { ...el, subject: e.target.value }
-                                        : null,
-                                    )
-                                  }
-                                  className="h-7 text-xs"
-                                />
-                                <Label className="text-xs">Topic</Label>
-                                <Input
-                                  value={
-                                    editLesson?.key === key
-                                      ? editLesson.topic
-                                      : lesson.topic
-                                  }
-                                  onChange={(e) =>
-                                    setEditLesson((el) =>
-                                      el
-                                        ? { ...el, topic: e.target.value }
-                                        : null,
-                                    )
-                                  }
-                                  className="h-7 text-xs"
-                                />
+                                <p className="text-sm font-semibold">
+                                  Edit Lesson
+                                </p>
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs">Subject</Label>
+                                  <Input
+                                    value={
+                                      editLesson?.key === key
+                                        ? editLesson.subject
+                                        : lesson.subject
+                                    }
+                                    onChange={(e) =>
+                                      setEditLesson((el) =>
+                                        el
+                                          ? { ...el, subject: e.target.value }
+                                          : null,
+                                      )
+                                    }
+                                    className="input-premium"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs">Topic</Label>
+                                  <Input
+                                    value={
+                                      editLesson?.key === key
+                                        ? editLesson.topic
+                                        : lesson.topic
+                                    }
+                                    onChange={(e) =>
+                                      setEditLesson((el) =>
+                                        el
+                                          ? { ...el, topic: e.target.value }
+                                          : null,
+                                      )
+                                    }
+                                    className="input-premium"
+                                  />
+                                </div>
                                 <Button
                                   size="sm"
-                                  className="w-full"
+                                  className="w-full btn-press"
+                                  style={{ background: "var(--color-primary)" }}
                                   onClick={saveLocalLesson}
                                   data-ocid="teacher.planner.save_button"
                                 >
@@ -1263,7 +1377,7 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              className="w-full h-full flex items-center justify-center text-muted-foreground/30 hover:text-primary hover:bg-primary/5 rounded-md transition-colors"
+                              className="w-full h-full flex items-center justify-center text-muted-foreground/30 hover:text-primary hover:bg-primary/5 rounded-lg transition-colors"
                               onClick={() =>
                                 setEditLesson({ key, subject: "", topic: "" })
                               }
@@ -1273,12 +1387,14 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                             </button>
                           </PopoverTrigger>
                           <PopoverContent
-                            className="w-60"
+                            className="w-60 shadow-floating"
                             data-ocid="teacher.planner.popover"
                           >
                             <div className="space-y-3">
-                              <p className="text-sm font-medium">Add Lesson</p>
-                              <div>
+                              <p className="text-sm font-semibold">
+                                Add Lesson
+                              </p>
+                              <div className="space-y-1.5">
                                 <Label className="text-xs">Subject</Label>
                                 <Input
                                   value={
@@ -1297,10 +1413,10 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                                           },
                                     )
                                   }
-                                  className="mt-1 h-7 text-xs"
+                                  className="input-premium"
                                 />
                               </div>
-                              <div>
+                              <div className="space-y-1.5">
                                 <Label className="text-xs">Topic</Label>
                                 <Input
                                   value={
@@ -1319,12 +1435,13 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
                                           },
                                     )
                                   }
-                                  className="mt-1 h-7 text-xs"
+                                  className="input-premium"
                                 />
                               </div>
                               <Button
                                 size="sm"
-                                className="w-full"
+                                className="w-full btn-press"
+                                style={{ background: "var(--color-primary)" }}
                                 onClick={saveLocalLesson}
                                 data-ocid="teacher.planner.save_button"
                               >
@@ -1342,6 +1459,162 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
           </div>
         </div>
       </div>
+
+      {/* Create Lesson Plan Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent
+          className="glass-elevated border-white/20 shadow-modal max-w-lg"
+          data-ocid="teacher.lesson_plan.dialog"
+        >
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: "var(--color-primary-light)" }}
+              >
+                <BookOpen
+                  className="w-5 h-5"
+                  style={{ color: "var(--color-primary)" }}
+                />
+              </div>
+              <div>
+                <DialogTitle className="font-display">
+                  Create Lesson Plan
+                </DialogTitle>
+                <p className="text-xs text-muted-foreground">
+                  Saved via POST /teachers/{teacherId}/lesson-plan
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+          <Separator />
+          <form onSubmit={handleLpSubmit} className="space-y-4 py-1">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Subject *</Label>
+                <Select
+                  value={lpForm.subjectId}
+                  onValueChange={(v) =>
+                    setLpForm((f) => ({ ...f, subjectId: v }))
+                  }
+                >
+                  <SelectTrigger
+                    className="input-premium"
+                    data-ocid="teacher.lesson_plan.subject.select"
+                  >
+                    <SelectValue placeholder="Select subject" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SUBJECT_OPTIONS.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Class *</Label>
+                <Select
+                  value={lpForm.classId}
+                  onValueChange={(v) =>
+                    setLpForm((f) => ({ ...f, classId: v }))
+                  }
+                >
+                  <SelectTrigger
+                    className="input-premium"
+                    data-ocid="teacher.lesson_plan.class.select"
+                  >
+                    <SelectValue placeholder="Select class" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CLASS_OPTIONS.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Lesson Date *</Label>
+              <Input
+                type="date"
+                value={lpForm.lessonDate}
+                onChange={(e) =>
+                  setLpForm((f) => ({ ...f, lessonDate: e.target.value }))
+                }
+                className="input-premium"
+                data-ocid="teacher.lesson_plan.date.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Learning Objectives
+              </Label>
+              <Textarea
+                value={lpForm.objectives}
+                onChange={(e) =>
+                  setLpForm((f) => ({ ...f, objectives: e.target.value }))
+                }
+                placeholder="e.g. Students will understand quadratic equations and their applications"
+                className="min-h-[80px] text-sm resize-none input-premium"
+                data-ocid="teacher.lesson_plan.objectives.textarea"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Lesson Content
+              </Label>
+              <Textarea
+                value={lpForm.content}
+                onChange={(e) =>
+                  setLpForm((f) => ({ ...f, content: e.target.value }))
+                }
+                placeholder="e.g. Introduction to ax² + bx + c = 0, graphical solutions"
+                className="min-h-[80px] text-sm resize-none input-premium"
+                data-ocid="teacher.lesson_plan.content.textarea"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Resources</Label>
+              <Input
+                value={lpForm.resources}
+                onChange={(e) =>
+                  setLpForm((f) => ({ ...f, resources: e.target.value }))
+                }
+                className="input-premium"
+                placeholder="e.g. Textbook chapter 4, Graph paper"
+                data-ocid="teacher.lesson_plan.resources.input"
+              />
+            </div>
+            <DialogFooter className="gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setLpForm(EMPTY_LP_FORM);
+                  setShowCreateDialog(false);
+                }}
+                data-ocid="teacher.lesson_plan.cancel_button"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={createLessonPlan.isPending}
+                className="btn-press gap-2"
+                style={{ background: "var(--color-primary)" }}
+                data-ocid="teacher.lesson_plan.submit_button"
+              >
+                <Save className="w-4 h-4" />
+                {createLessonPlan.isPending ? "Saving…" : "Save Lesson Plan"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1349,10 +1622,7 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TeacherPage() {
-  // Use teacherId=1 as the "current teacher" for gradebook/lesson plan hooks
-  // In live mode this should come from the auth context
   const CURRENT_TEACHER_ID = 1;
-
   const [selectedTeacherId, setSelectedTeacherId] = useState<number | null>(
     null,
   );
@@ -1364,31 +1634,47 @@ export default function TeacherPage() {
       transition={{ duration: 0.35 }}
       className="space-y-6"
     >
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Teacher Portal</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Teacher directory, gradebook, lesson planning, and online class
-          management
-        </p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold font-display text-foreground">
+            Teacher Portal
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Teacher directory, gradebook, lesson planning, and online class
+            management
+          </p>
+        </div>
+        {isDemoMode() && (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+            Demo Mode
+          </span>
+        )}
       </div>
 
       <Tabs defaultValue="teachers">
-        <TabsList data-ocid="teacher.tab">
-          <TabsTrigger value="teachers" data-ocid="teacher.tab.teachers">
-            Teachers
-          </TabsTrigger>
-          <TabsTrigger value="gradebook" data-ocid="teacher.tab.gradebook">
-            Gradebook
-          </TabsTrigger>
-          <TabsTrigger value="planner" data-ocid="teacher.tab.planner">
-            Lesson Planner
-          </TabsTrigger>
-          <TabsTrigger value="online" data-ocid="teacher.tab.online">
-            Online Classes
-          </TabsTrigger>
+        <TabsList
+          className="border-b border-border rounded-none bg-transparent p-0 h-auto gap-0"
+          data-ocid="teacher.tab"
+        >
+          {[
+            { value: "teachers", label: "Teachers", icon: Users },
+            { value: "gradebook", label: "Gradebook", icon: BookOpen },
+            { value: "planner", label: "Lesson Planner", icon: GraduationCap },
+            { value: "online", label: "Online Classes", icon: Video },
+          ].map(({ value, label, icon: Icon }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-[var(--color-primary)] data-[state=active]:text-foreground px-5 py-3 text-sm font-medium text-muted-foreground transition-colors gap-2"
+              data-ocid={`teacher.tab.${value}`}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        {/* Teachers List / Detail */}
         <TabsContent value="teachers" className="mt-6">
           {selectedTeacherId !== null ? (
             <TeacherDetail
@@ -1400,17 +1686,14 @@ export default function TeacherPage() {
           )}
         </TabsContent>
 
-        {/* Gradebook — wired to CURRENT_TEACHER_ID with filters */}
         <TabsContent value="gradebook" className="mt-6">
           <GradebookTab teacherId={CURRENT_TEACHER_ID} />
         </TabsContent>
 
-        {/* Lesson Planner — create form + timetable grid */}
         <TabsContent value="planner" className="mt-6">
           <LessonPlannerTab teacherId={CURRENT_TEACHER_ID} />
         </TabsContent>
 
-        {/* Online Classes */}
         <TabsContent value="online" className="mt-6">
           <OnlineClassesTab />
         </TabsContent>
