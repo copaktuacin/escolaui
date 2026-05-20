@@ -52,24 +52,7 @@ function IconEyeOff() {
   );
 }
 
-function IconGraduationCap() {
-  return (
-    <svg
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-      <path d="M6 12v5c3 3 9 3 12 0v-5" />
-    </svg>
-  );
-}
+// IconGraduationCap removed — unused
 
 function IconShield() {
   return (
@@ -415,10 +398,10 @@ const DEMO_CREDENTIALS = [
 ];
 
 const STATS = [
-  { value: "2,450+", label: "Students" },
-  { value: "187", label: "Teachers" },
-  { value: "96.2%", label: "Attendance" },
-  { value: "16", label: "Modules" },
+  { label: "Schools Enrolled" },
+  { label: "Expert Teachers" },
+  { label: "Student Satisfaction" },
+  { label: "Modules" },
 ];
 
 const FEATURES = [
@@ -454,7 +437,7 @@ export default function LoginPage() {
     return null;
   }
 
-  const schoolName = profile.schoolName || "EscolaUI";
+  const schoolName = profile.schoolName || "";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -534,26 +517,27 @@ export default function LoginPage() {
                   style={{ border: "1px solid rgba(255,255,255,0.2)" }}
                 />
               ) : (
-                <div
-                  className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                <img
+                  src="/assets/escola-logo.png"
+                  alt="Escola"
+                  className="w-12 h-12 rounded-2xl object-contain"
                   style={{
                     background: "rgba(255,255,255,0.12)",
                     border: "1px solid rgba(255,255,255,0.2)",
                     boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+                    padding: "4px",
                   }}
-                >
-                  <span style={{ color: "#fff" }}>
-                    <IconGraduationCap />
-                  </span>
-                </div>
+                />
               )}
               <div>
-                <span
-                  className="text-xl font-bold font-display tracking-tight"
-                  style={{ color: "#fff" }}
-                >
-                  {schoolName}
-                </span>
+                {schoolName && (
+                  <span
+                    className="text-xl font-bold font-display tracking-tight"
+                    style={{ color: "#fff" }}
+                  >
+                    {schoolName}
+                  </span>
+                )}
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span
                     className="text-[10px] tracking-widest uppercase"
@@ -623,14 +607,8 @@ export default function LoginPage() {
                 }}
               >
                 <p
-                  className="text-2xl font-bold font-display"
-                  style={{ color: "#fff" }}
-                >
-                  {stat.value}
-                </p>
-                <p
-                  className="text-xs mt-0.5"
-                  style={{ color: "rgba(255,255,255,0.45)" }}
+                  className="text-xs mt-0.5 font-medium"
+                  style={{ color: "rgba(255,255,255,0.65)" }}
                 >
                   {stat.label}
                 </p>
@@ -651,30 +629,25 @@ export default function LoginPage() {
                   className="w-9 h-9 rounded-xl object-contain"
                 />
               ) : (
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                <img
+                  src="/assets/escola-logo.png"
+                  alt="Escola"
+                  className="w-9 h-9 rounded-xl object-contain"
                   style={{
                     background: "rgba(255,255,255,0.12)",
                     border: "1px solid rgba(255,255,255,0.2)",
+                    padding: "3px",
                   }}
-                >
-                  <span
-                    style={{
-                      color: "#fff",
-                      transform: "scale(0.8)",
-                      display: "flex",
-                    }}
-                  >
-                    <IconGraduationCap />
-                  </span>
-                </div>
+                />
               )}
-              <span
-                className="font-bold font-display"
-                style={{ color: "#fff" }}
-              >
-                {schoolName}
-              </span>
+              {schoolName && (
+                <span
+                  className="font-bold font-display"
+                  style={{ color: "#fff" }}
+                >
+                  {schoolName}
+                </span>
+              )}
             </div>
 
             {/* Login card */}
@@ -897,8 +870,10 @@ export default function LoginPage() {
                       <IconLoader />
                       Signing in...
                     </>
-                  ) : (
+                  ) : schoolName ? (
                     `Sign in to ${schoolName}`
+                  ) : (
+                    "Sign in"
                   )}
                 </button>
               </form>

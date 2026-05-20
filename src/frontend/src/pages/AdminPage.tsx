@@ -416,7 +416,7 @@ export default function AdminPage() {
 
   const settingsValues = settingsData?.values ?? {};
   const [settingsForm, setSettingsForm] = useState({
-    SchoolName: profile.schoolName,
+    SchoolName: profile.schoolName ?? "",
     TimeZone: "UTC",
     Currency: "USD",
     MaxUploadSizeMB: "50",
@@ -493,16 +493,17 @@ export default function AdminPage() {
 
   function handleSaveSettings() {
     const values: Record<string, string> = {
-      SchoolName: settingsForm.SchoolName,
-      TimeZone: settingsForm.TimeZone,
-      Currency: settingsForm.Currency,
-      MaxUploadSizeMB: settingsForm.MaxUploadSizeMB,
+      SchoolName: settingsForm.SchoolName ?? "",
+      TimeZone: settingsForm.TimeZone ?? "UTC",
+      Currency: settingsForm.Currency ?? "USD",
+      MaxUploadSizeMB: settingsForm.MaxUploadSizeMB ?? "50",
     };
     updateAdminSettings.mutate(values, {
-      onSuccess: (data) => {
+      onSuccess: (data: unknown) => {
         toast.success("Settings saved successfully");
-        if (data.values.SchoolName)
-          updateProfile({ schoolName: data.values.SchoolName });
+        const d = data as { values?: { SchoolName?: string } } | null;
+        const savedName = d?.values?.SchoolName;
+        if (savedName) updateProfile({ schoolName: savedName });
       },
       onError: (e: Error) => toast.error(e.message),
     });

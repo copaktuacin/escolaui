@@ -5,72 +5,15 @@ import {
   type Tenant,
   adminGetReminderLog,
   adminGetTenants,
-  adminResetPassword,
+  adminResetPrincipalPassword,
   adminSendReminders,
+  adminUpdateSubscription,
   adminUpdateTenant,
+  api,
+  resolveTenantId,
 } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
 
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_TENANTS: Tenant[] = [
-  {
-    id: 1,
-    schoolName: "Springfield Academy",
-    adminEmail: "admin@springfield.edu",
-    domain: "springfield.escolaui.com",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2024-09-01T00:00:00Z",
-    nextBillingDate: "2026-05-01T00:00:00Z",
-  },
-  {
-    id: 2,
-    schoolName: "Riverside Public School",
-    adminEmail: "admin@riverside.edu",
-    domain: "riverside.escolaui.com",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2024-11-15T00:00:00Z",
-    nextBillingDate: "2026-05-15T00:00:00Z",
-  },
-  {
-    id: 3,
-    schoolName: "Lakewood International",
-    adminEmail: "admin@lakewood.edu",
-    subscriptionPlan: "Basic",
-    isActive: false,
-    createdAt: "2025-01-10T00:00:00Z",
-    nextBillingDate: "2026-04-10T00:00:00Z",
-    outstandingAmount: 2400,
-  },
-];
-
-const MOCK_REMINDER_LOG: ReminderLog[] = [
-  {
-    id: 1,
-    sentAt: "2026-04-20T10:00:00Z",
-    sentBy: "admin",
-    message: "Your subscription payment is overdue. Please renew immediately.",
-    recipients: [{ tenantId: 3, schoolName: "Lakewood International" }],
-    sentCount: 1,
-    status: "Delivered",
-  },
-];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const PLAN_STYLES: Record<string, string> = {
-  Basic: "bg-blue-900/30 text-blue-400 border border-blue-700/40",
-  Standard: "bg-violet-900/30 text-violet-400 border border-violet-700/40",
-  Premium: "bg-amber-900/30 text-amber-400 border border-amber-700/40",
-};
-
-const PLANS: Array<"Basic" | "Standard" | "Premium"> = [
-  "Basic",
-  "Standard",
-  "Premium",
-];
+// ─── Styles ──────────────────────────────────────────────────────────────────
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors focus:ring-2 focus:ring-indigo-500/40";
@@ -80,7 +23,74 @@ const inputStyle = {
   color: "#e2e8f0",
 };
 
+const PLAN_STYLES: Record<string, string> = {
+  Basic: "bg-blue-900/30 text-blue-400 border border-blue-700/40",
+  Standard: "bg-violet-900/30 text-violet-400 border border-violet-700/40",
+  Premium: "bg-amber-900/30 text-amber-400 border border-amber-700/40",
+};
+const PLANS = ["Basic", "Standard", "Premium"] as const;
+
 type Tab = "overview" | "subscription" | "principal" | "reminders";
+type Feedback = { type: "success" | "error"; text: string } | null;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function normalizeTenant(raw: unknown): Tenant {
+  const r = raw as Record<string, unknown>;
+  const id = Number(resolveTenantId(r) ?? 0);
+  return {
+    ...r,
+    id,
+    schoolName: (r.SchoolName as string) ?? (r.schoolName as string) ?? "",
+    adminEmail:
+      (r.AdminEmail as string) ??
+      (r.Email as string) ??
+      (r.adminEmail as string) ??
+      "",
+    domain: ((r.Domain as string) ?? (r.domain as string)) || undefined,
+    subscriptionPlan: ((r.SubscriptionPlan as string) ??
+      (r.subscriptionPlan as string) ??
+      "Basic") as "Basic" | "Standard" | "Premium",
+    isActive: Boolean(
+      (r.IsActive as unknown) ?? (r.isActive as unknown) ?? false,
+    ),
+    createdAt:
+      (r.CreatedAt as string) ??
+      (r.createdAt as string) ??
+      new Date().toISOString(),
+    nextBillingDate:
+      ((r.NextBillingDate as string) ?? (r.nextBillingDate as string)) ||
+      undefined,
+    outstandingAmount:
+      ((r.OutstandingAmount as number) ?? (r.outstandingAmount as number)) ||
+      undefined,
+    principalName:
+      (r.PrincipalName as string) ?? (r.principalName as string) ?? undefined,
+    schoolUsername:
+      (r.SchoolUsername as string) ??
+      (r.schoolUsername as string) ??
+      (r.AdminUsername as string) ??
+      (r.adminUsername as string) ??
+      undefined,
+    adminPhone:
+      (r.AdminPhone as string) ??
+      (r.adminPhone as string) ??
+      (r.PrincipalPhone as string) ??
+      (r.Phone as string) ??
+      (r.phone as string) ??
+      undefined,
+    principalEmail:
+      (r.PrincipalEmail as string) ?? (r.principalEmail as string) ?? undefined,
+    principalMobileNo:
+      (r.PrincipalMobileNo as string) ??
+      (r.principalMobileNo as string) ??
+      undefined,
+    principalUserName:
+      (r.PrincipalUserName as string) ??
+      (r.principalUserName as string) ??
+      undefined,
+  } as Tenant;
+}
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
@@ -102,132 +112,12 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
-/**
- * Extract the real numeric ID from a raw API tenant object using a catch-all scan.
- * Logs the full raw object so the exact field name is always visible in the console.
- * Priority: keys containing 'tenant'+'id' > 'school'+'id' > any key ending in 'id' > any key containing 'id' > first positive int.
- */
-function getTenantId(tenant: Tenant): number | null {
-  const raw = tenant as unknown as Record<string, unknown>;
-  console.log(
-    "[EscolaUI] getTenantId (detail) — raw tenant object:",
-    JSON.stringify(raw),
-  );
-
-  const keys = Object.keys(raw);
-
-  const isPositiveInt = (v: unknown): v is number => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 && Math.floor(n) === n;
-  };
-
-  // Tier 1: key contains both 'tenant' and 'id'
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if (kl.includes("tenant") && kl.includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-1 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 2: key contains both 'school' and 'id'
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if (kl.includes("school") && kl.includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-2 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 3: key ends with or equals 'id'
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if ((kl === "id" || kl.endsWith("id")) && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-3 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 4: any key containing 'id'
-  for (const k of keys) {
-    if (k.toLowerCase().includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-4 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 5: fallback — first positive integer in the object
-  for (const k of keys) {
-    if (isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via fallback key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  console.error(
-    "[EscolaUI] getTenantId — no numeric ID found. Full object:",
-    JSON.stringify(raw),
-  );
-  return null;
-}
-
-/**
- * Normalize a raw API tenant object so that `id` is always the real numeric ID.
- * Also normalizes field names from PascalCase (.NET) to camelCase (frontend).
- */
-function normalizeTenant(raw: Tenant): Tenant {
-  const r = raw as unknown as Record<string, unknown>;
-  const realId = getTenantId(raw);
-
-  // Map .NET PascalCase → camelCase for all fields the frontend reads
-  return {
-    id: realId ?? 0,
-    schoolName: (r.SchoolName as string) ?? (r.schoolName as string) ?? "",
-    adminEmail:
-      (r.AdminEmail as string) ??
-      (r.Email as string) ??
-      (r.adminEmail as string) ??
-      "",
-    domain: ((r.Domain as string) ?? (r.domain as string)) || undefined,
-    subscriptionPlan: ((r.SubscriptionPlan as string) ??
-      (r.subscriptionPlan as string) ??
-      "Basic") as "Basic" | "Standard" | "Premium",
-    isActive: (r.IsActive as boolean) ?? (r.isActive as boolean) ?? false,
-    createdAt:
-      (r.CreatedAt as string) ??
-      (r.createdAt as string) ??
-      new Date().toISOString(),
-    nextBillingDate:
-      ((r.NextBillingDate as string) ?? (r.nextBillingDate as string)) ||
-      undefined,
-    outstandingAmount:
-      ((r.OutstandingAmount as number) ?? (r.outstandingAmount as number)) ||
-      undefined,
-  };
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminSchoolDetailPage() {
   const navigate = useNavigate();
   const params = useParams({ strict: false }) as { id?: string };
 
-  // Guard: if the ID param is missing or literally "undefined", redirect back
   const rawId = params.id;
   const schoolId =
     rawId && rawId !== "undefined" && rawId !== "null" ? Number(rawId) : null;
@@ -237,112 +127,181 @@ export default function PlatformAdminSchoolDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
-  // Reminder state
+  // Subscription
+  const [selectedPlan, setSelectedPlan] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [subStatus, setSubStatus] = useState("Active");
+  const [updatingPlan, setUpdatingPlan] = useState(false);
+  const [planFeedback, setPlanFeedback] = useState<Feedback>(null);
+
+  // Principal
+  const [principalName, setPrincipalName] = useState("");
+  const [principalUserName, setPrincipalUserName] = useState("");
+  const [principalEmail, setPrincipalEmail] = useState("");
+  const [principalMobileNo, setPrincipalMobileNo] = useState("");
+  const [savingPrincipal, setSavingPrincipal] = useState(false);
+  const [principalFeedback, setPrincipalFeedback] = useState<Feedback>(null);
+
+  // Password reset
+  const [newPassword, setNewPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [resettingPw, setResettingPw] = useState(false);
+  const [pwFeedback, setPwFeedback] = useState<Feedback>(null);
+
+  // Status toggle
+  const [togglingStatus, setTogglingStatus] = useState(false);
+  const [toggleFeedback, setToggleFeedback] = useState<Feedback>(null);
+
+  // Reminders tab
   const [reminders, setReminders] = useState<ReminderLog[]>([]);
   const [reminderLoading, setReminderLoading] = useState(false);
   const [reminderMsg, setReminderMsg] = useState("");
   const [sendingReminder, setSendingReminder] = useState(false);
-  const [reminderFeedback, setReminderFeedback] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [reminderFeedback, setReminderFeedback] = useState<Feedback>(null);
 
-  // Principal reset password state
-  const [newPassword, setNewPassword] = useState("");
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [resettingPw, setResettingPw] = useState(false);
-  const [pwFeedback, setPwFeedback] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
+  // Pre-fill principal form when tenant loads — handle all possible API field paths
+  useEffect(() => {
+    if (!tenant) return;
+    // Cast to access both camelCase and PascalCase fields that may come from the API
+    const t = tenant as Tenant & Record<string, unknown>;
+    const principalNameVal =
+      (t.principalName as string | undefined) ??
+      (t.PrincipalName as string | undefined) ??
+      (t.Principal as string | undefined) ??
+      "";
+    // Prefer principalUserName (from profileByID) over legacy schoolUsername
+    const usernameVal =
+      (t.principalUserName as string | undefined) ??
+      (t.PrincipalUserName as string | undefined) ??
+      (t.schoolUsername as string | undefined) ??
+      (t.SchoolUsername as string | undefined) ??
+      (t.username as string | undefined) ??
+      (t.Username as string | undefined) ??
+      (t.adminUsername as string | undefined) ??
+      (t.AdminUsername as string | undefined) ??
+      "";
+    const emailVal =
+      (t.principalEmail as string | undefined) ??
+      (t.PrincipalEmail as string | undefined) ??
+      (t.adminEmail as string | undefined) ??
+      (t.AdminEmail as string | undefined) ??
+      (t.Email as string | undefined) ??
+      (t.email as string | undefined) ??
+      "";
+    // Prefer principalMobileNo (from profileByID) over legacy adminPhone
+    const mobileVal =
+      (t.principalMobileNo as string | undefined) ??
+      (t.PrincipalMobileNo as string | undefined) ??
+      (t.adminPhone as string | undefined) ??
+      (t.AdminPhone as string | undefined) ??
+      (t.principalPhone as string | undefined) ??
+      (t.PrincipalPhone as string | undefined) ??
+      (t.Phone as string | undefined) ??
+      (t.phone as string | undefined) ??
+      (t.Mobile as string | undefined) ??
+      (t.mobile as string | undefined) ??
+      "";
+    console.log("[EscolaUI] Principal tab pre-fill:", {
+      principalNameVal,
+      usernameVal,
+      emailVal,
+      mobileVal,
+    });
+    setPrincipalName(principalNameVal);
+    setPrincipalUserName(usernameVal);
+    setPrincipalEmail(emailVal);
+    setPrincipalMobileNo(mobileVal);
+    setSelectedPlan(
+      (t.subscriptionPlan as string | undefined) ??
+        (t.SubscriptionPlan as string | undefined) ??
+        "Basic",
+    );
+  }, [tenant]);
 
-  // Subscription state
-  const [selectedPlan, setSelectedPlan] = useState<string>("");
-  const [updatingPlan, setUpdatingPlan] = useState(false);
-  const [planFeedback, setPlanFeedback] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
-
-  // Status toggle
-  const [togglingStatus, setTogglingStatus] = useState(false);
-  const [toggleFeedback, setToggleFeedback] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
-
-  // Redirect immediately if the route param is invalid
+  // Redirect if invalid ID
   useEffect(() => {
     if (!schoolId || !Number.isFinite(schoolId) || schoolId <= 0) {
-      console.error(
-        "[EscolaUI] SchoolDetailPage: invalid or missing school ID in URL param:",
-        rawId,
-        "— redirecting back to schools list.",
-      );
+      console.error("[EscolaUI] SchoolDetail: invalid ID in URL:", rawId);
       navigate({ to: "/platform-admin/schools" });
     }
   }, [schoolId, rawId, navigate]);
 
-  // ── Fetch tenant ──────────────────────────────────────────────────────────
+  // Fetch tenant — always enriches from profileByID regardless of whether
+  // the individual tenant endpoint exists, so principal fields always bind.
   const fetchTenant = useCallback(async () => {
     if (!schoolId || !Number.isFinite(schoolId) || schoolId <= 0) return;
-
     setLoading(true);
     setError(null);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 300));
-        const found = MOCK_TENANTS.find((t) => t.id === schoolId);
-        if (!found) {
-          setError("School not found");
-          return;
-        }
-        setTenant(found);
-        setSelectedPlan(found.subscriptionPlan);
-      } else {
-        const res = await adminGetTenants(1, 200);
-        if (!res.success) {
-          setError(res.error ?? "Failed to load school");
-          return;
-        }
-        const rawList: Tenant[] = Array.isArray(
-          (res.data as { data?: Tenant[] })?.data,
-        )
-          ? (res.data as { data: Tenant[] }).data
-          : Array.isArray(res.data)
-            ? (res.data as unknown as Tenant[])
-            : [];
-
-        // Log the raw list to help diagnose field-name issues
-        if (rawList.length > 0) {
+      // Always fetch profileByID first — it is the authoritative source for
+      // principalName, principalEmail, principalMobileNo, principalUserName.
+      let profileData: Record<string, unknown> = {};
+      try {
+        const profileRes = await api.get<Record<string, unknown>>(
+          `/school/profileByID?id=${schoolId}`,
+        );
+        if (profileRes.success && profileRes.data) {
+          profileData = profileRes.data as Record<string, unknown>;
           console.log(
-            "[EscolaUI] SchoolDetail: looking for schoolId =",
-            schoolId,
-            "in",
-            rawList.length,
-            "tenants. First raw item:",
-            JSON.stringify(rawList[0]),
+            "[EscolaUI] profileByID raw:",
+            JSON.stringify(profileData),
           );
         }
+      } catch {
+        console.warn(
+          "[EscolaUI] profileByID unavailable, will use tenant list data",
+        );
+      }
 
-        const normalizedList = rawList.map(normalizeTenant);
-        const found = normalizedList.find((t) => t.id === schoolId);
-        if (!found) {
-          console.warn(
-            "[EscolaUI] School with id",
-            schoolId,
-            "not found. Available normalized IDs:",
-            normalizedList.map((t) => t.id),
-            "— raw list logged above for reference.",
-          );
-          setError(
-            `School not found (ID: ${String(schoolId)}). Check browser console for full raw tenant objects and available IDs.`,
-          );
+      // Try individual tenant endpoint
+      const singleRes = await api.get<Tenant>(
+        `/TenantSettings/admin/tenants/${schoolId}`,
+      );
+      if (singleRes.success && singleRes.data) {
+        // Merge: profileByID fields win for principal details (spread last)
+        const merged = normalizeTenant({
+          ...(singleRes.data as Record<string, unknown>),
+          ...profileData,
+        });
+        console.log("[EscolaUI] Tenant merged:", JSON.stringify(merged));
+        setTenant(merged);
+        return;
+      }
+
+      // Fallback: list search
+      const listRes = await adminGetTenants(1, 200);
+      if (!listRes.success) {
+        // If we have profileByID data, use it even without the list
+        if (Object.keys(profileData).length > 0) {
+          setTenant(normalizeTenant(profileData));
           return;
         }
-        setTenant(found);
-        setSelectedPlan(found.subscriptionPlan);
+        setError(listRes.error ?? "Failed to load school");
+        return;
       }
+      const rawList: unknown[] = Array.isArray(listRes.data)
+        ? (listRes.data as unknown[])
+        : Array.isArray((listRes.data as { data?: unknown[] })?.data)
+          ? (listRes.data as { data: unknown[] }).data
+          : [];
+      const normalized = rawList.map(normalizeTenant);
+      const found = normalized.find((t) => t.id === schoolId);
+      if (found) {
+        // Merge profileByID into the found tenant so principal fields are always present
+        setTenant(
+          normalizeTenant({
+            ...(found as unknown as Record<string, unknown>),
+            ...profileData,
+          }),
+        );
+        return;
+      }
+      // Last resort: use profileByID data alone
+      if (Object.keys(profileData).length > 0) {
+        setTenant(normalizeTenant(profileData));
+        return;
+      }
+      setError(`School not found (ID: ${String(schoolId)})`);
     } catch {
       setError("Failed to load school details");
     } finally {
@@ -354,32 +313,23 @@ export default function PlatformAdminSchoolDetailPage() {
     fetchTenant();
   }, [fetchTenant]);
 
-  // ── Fetch reminders for this tenant ──────────────────────────────────────
+  // Fetch reminders for this tenant
   const fetchReminders = useCallback(async () => {
     if (!schoolId) return;
     setReminderLoading(true);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 200));
-        setReminders(
-          MOCK_REMINDER_LOG.filter((r) =>
-            r.recipients.some((rec) => rec.tenantId === schoolId),
-          ),
-        );
-      } else {
-        const res = await adminGetReminderLog(1, 100);
-        if (res.success) {
-          const all: ReminderLog[] = Array.isArray(
-            (res.data as { data?: ReminderLog[] })?.data,
-          )
+      const res = await adminGetReminderLog(1, 100);
+      if (res.success) {
+        const all: ReminderLog[] = Array.isArray(res.data)
+          ? (res.data as ReminderLog[])
+          : Array.isArray((res.data as { data?: ReminderLog[] })?.data)
             ? (res.data as { data: ReminderLog[] }).data
             : [];
-          setReminders(
-            all.filter((r) =>
-              r.recipients?.some((rec) => rec.tenantId === schoolId),
-            ),
-          );
-        }
+        setReminders(
+          all.filter((r) =>
+            r.recipients?.some((rec) => rec.tenantId === schoolId),
+          ),
+        );
       }
     } finally {
       setReminderLoading(false);
@@ -390,86 +340,67 @@ export default function PlatformAdminSchoolDetailPage() {
     if (activeTab === "reminders") fetchReminders();
   }, [activeTab, fetchReminders]);
 
-  // ── Toggle active/inactive ────────────────────────────────────────────────
+  // Toggle active status
   async function handleToggleStatus() {
     if (!tenant) return;
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) {
+    const id = resolveTenantId(tenant);
+    if (!id) {
       setToggleFeedback({
         type: "error",
-        text: "Cannot toggle — school ID is missing",
+        text: "Cannot toggle — school ID missing",
       });
-      setTimeout(() => setToggleFeedback(null), 4000);
       return;
     }
-
     setTogglingStatus(true);
-    setToggleFeedback(null);
     const newActive = !tenant.isActive;
-
-    // Optimistic update
     setTenant((t) => (t ? { ...t, isActive: newActive } : t));
-
     try {
-      if (!isDemoMode()) {
-        console.log(
-          "[EscolaUI] Toggling tenant",
-          tenantId,
-          "to IsActive:",
-          newActive,
-        );
-        const res = await adminUpdateTenant(tenantId, { isActive: newActive });
-        if (!res.success) {
-          // Revert on failure
-          setTenant((t) => (t ? { ...t, isActive: !newActive } : t));
-          const errorDetail = res.error ?? "Failed to update status";
-          setToggleFeedback({ type: "error", text: errorDetail });
-          setTimeout(() => setToggleFeedback(null), 6000);
-          return;
-        }
+      const res = await adminUpdateTenant(id, { IsActive: newActive });
+      if (!res.success) {
+        setTenant((t) => (t ? { ...t, isActive: !newActive } : t));
+        setToggleFeedback({ type: "error", text: res.error ?? "Failed" });
+        setTimeout(() => setToggleFeedback(null), 6000);
+        return;
       }
       setToggleFeedback({
         type: "success",
-        text: `School ${newActive ? "activated" : "deactivated"} successfully`,
+        text: `School ${newActive ? "activated" : "deactivated"}`,
       });
       setTimeout(() => setToggleFeedback(null), 3000);
     } catch (err) {
-      // Revert on exception
       setTenant((t) => (t ? { ...t, isActive: !newActive } : t));
       setToggleFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "Failed to update status",
+        text: err instanceof Error ? err.message : "Failed",
       });
-      setTimeout(() => setToggleFeedback(null), 6000);
     } finally {
       setTogglingStatus(false);
     }
   }
 
-  // ── Change subscription plan ──────────────────────────────────────────────
+  // Update subscription
   async function handleChangePlan() {
-    if (!tenant || selectedPlan === tenant.subscriptionPlan) return;
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) return;
-
+    if (!tenant) return;
+    const id = resolveTenantId(tenant);
+    if (!id) return;
     setUpdatingPlan(true);
     setPlanFeedback(null);
     try {
-      if (!isDemoMode()) {
-        // Try dedicated subscription endpoint first
-        const subRes = await import("../lib/api").then(({ api }) =>
-          api.put<{ success: boolean }>(
-            `/TenantSettings/admin/tenants/${tenantId}/subscription`,
-            { plan: selectedPlan, status: "Active" },
-          ),
-        );
-        if (!subRes.success) {
-          // On 404 or any error, fall back to the general update endpoint
-          const fallback = await adminUpdateTenant(tenantId, {
-            subscriptionPlan: selectedPlan as "Basic" | "Standard" | "Premium",
-          });
-          if (!fallback.success) throw new Error(fallback.error ?? "Failed");
-        }
+      const res = await adminUpdateSubscription(id, {
+        plan: selectedPlan,
+        expiryDate:
+          expiryDate ||
+          new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .slice(0, 10),
+        status: subStatus,
+      });
+      if (!res.success) {
+        // Fallback to general update
+        const fb = await adminUpdateTenant(id, {
+          SubscriptionPlan: selectedPlan,
+        });
+        if (!fb.success) throw new Error(fb.error ?? "Failed");
       }
       setTenant((t) =>
         t
@@ -497,7 +428,102 @@ export default function PlatformAdminSchoolDetailPage() {
     }
   }
 
-  // ── Reset principal password ──────────────────────────────────────────────
+  // Save principal
+  async function handleSavePrincipal() {
+    if (!tenant) return;
+    // Use schoolId from URL params directly — most reliable source
+    const id = schoolId ?? resolveTenantId(tenant);
+    if (!id) {
+      setPrincipalFeedback({
+        type: "error",
+        text: "Cannot save — school ID missing",
+      });
+      return;
+    }
+    setSavingPrincipal(true);
+    setPrincipalFeedback(null);
+    try {
+      // Send all editable principal fields in both camelCase and PascalCase
+      // to maximize compatibility with whatever the backend expects
+      const payload: Record<string, string | undefined> = {};
+      if (principalName.trim()) {
+        payload.PrincipalName = principalName.trim();
+      }
+      if (principalUserName.trim()) {
+        payload.PrincipalUserName = principalUserName.trim();
+        payload.SchoolUsername = principalUserName.trim();
+        payload.AdminUsername = principalUserName.trim();
+      }
+      if (principalEmail.trim()) {
+        payload.PrincipalEmail = principalEmail.trim();
+        payload.AdminEmail = principalEmail.trim();
+        payload.Email = principalEmail.trim();
+      }
+      if (principalMobileNo.trim()) {
+        payload.PrincipalMobileNo = principalMobileNo.trim();
+        payload.AdminPhone = principalMobileNo.trim();
+        payload.PrincipalPhone = principalMobileNo.trim();
+        payload.Phone = principalMobileNo.trim();
+      }
+      console.log(
+        `[EscolaUI] handleSavePrincipal: PUT /tenants/${id}`,
+        JSON.stringify(payload),
+      );
+      const res = await adminUpdateTenant(
+        id,
+        payload as Parameters<typeof adminUpdateTenant>[1],
+      );
+      if (!res.success) {
+        // If backend returns 404 for this endpoint, show a clear message
+        const is404 =
+          res.error?.includes("404") || res.error?.includes("Not Found");
+        if (is404) {
+          setPrincipalFeedback({
+            type: "error",
+            text: "Update endpoint not yet available. Your backend needs to support PUT /TenantSettings/admin/tenants/{id}.",
+          });
+          return;
+        }
+        throw new Error(res.error ?? "Failed to save");
+      }
+      // Update local state from the returned data if available
+      if (res.data) {
+        const updated = normalizeTenant(res.data);
+        setTenant(updated);
+      } else {
+        setTenant((t) =>
+          t
+            ? {
+                ...t,
+                principalName: principalName.trim() || t.principalName,
+                principalUserName:
+                  principalUserName.trim() || t.principalUserName,
+                schoolUsername: principalUserName.trim() || t.schoolUsername,
+                adminEmail: principalEmail.trim() || t.adminEmail,
+                principalEmail: principalEmail.trim() || t.principalEmail,
+                principalMobileNo:
+                  principalMobileNo.trim() || t.principalMobileNo,
+                adminPhone: principalMobileNo.trim() || t.adminPhone,
+              }
+            : t,
+        );
+      }
+      setPrincipalFeedback({
+        type: "success",
+        text: "Principal details saved successfully",
+      });
+      setTimeout(() => setPrincipalFeedback(null), 4000);
+    } catch (err) {
+      setPrincipalFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed",
+      });
+    } finally {
+      setSavingPrincipal(false);
+    }
+  }
+
+  // Reset password
   async function handleResetPassword() {
     if (!tenant || !newPassword || newPassword.length < 6) {
       setPwFeedback({
@@ -506,27 +532,23 @@ export default function PlatformAdminSchoolDetailPage() {
       });
       return;
     }
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) return;
-
+    const id = resolveTenantId(tenant);
+    if (!id) return;
     setResettingPw(true);
     setPwFeedback(null);
     try {
-      if (!isDemoMode()) {
-        const res = await adminResetPassword(tenantId, newPassword);
-        if (!res.success) {
-          // Graceful 404 handling
-          const is404 =
-            res.error?.includes("Not Found") || res.error?.includes("404");
-          if (is404) {
-            setPwFeedback({
-              type: "error",
-              text: "Password reset endpoint not yet available on the server — contact your backend team",
-            });
-            return;
-          }
-          throw new Error(res.error ?? "Failed");
+      const res = await adminResetPrincipalPassword(id, newPassword);
+      if (!res.success) {
+        const is404 =
+          res.error?.includes("Not Found") || res.error?.includes("404");
+        if (is404) {
+          setPwFeedback({
+            type: "error",
+            text: "Password reset endpoint not yet available on the server",
+          });
+          return;
         }
+        throw new Error(res.error ?? "Failed");
       }
       setPwFeedback({ type: "success", text: "Password reset successfully" });
       setNewPassword("");
@@ -541,19 +563,16 @@ export default function PlatformAdminSchoolDetailPage() {
     }
   }
 
-  // ── Send reminder ─────────────────────────────────────────────────────────
+  // Send reminder
   async function handleSendReminder() {
     if (!tenant || !reminderMsg.trim()) return;
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) return;
-
+    const id = resolveTenantId(tenant);
+    if (!id) return;
     setSendingReminder(true);
     setReminderFeedback(null);
     try {
-      if (!isDemoMode()) {
-        const res = await adminSendReminders([tenantId], reminderMsg.trim());
-        if (!res.success) throw new Error(res.error ?? "Failed");
-      }
+      const res = await adminSendReminders([id], reminderMsg.trim());
+      if (!res.success) throw new Error(res.error ?? "Failed");
       setReminderMsg("");
       setReminderFeedback({
         type: "success",
@@ -573,9 +592,8 @@ export default function PlatformAdminSchoolDetailPage() {
     }
   }
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // ─── Guards / Loading states ──────────────────────────────────────────
 
-  // If schoolId is invalid, show redirect message while useEffect fires
   if (!schoolId || !Number.isFinite(schoolId) || schoolId <= 0) {
     return (
       <div
@@ -586,13 +604,10 @@ export default function PlatformAdminSchoolDetailPage() {
         <p className="text-sm font-semibold mb-2" style={{ color: "#f1f5f9" }}>
           Invalid school ID
         </p>
-        <p className="text-xs mb-4" style={{ color: "#64748b" }}>
-          The URL contains an invalid or missing school ID. Redirecting…
-        </p>
         <button
           type="button"
           onClick={() => navigate({ to: "/platform-admin/schools" })}
-          className="px-4 py-2 rounded-lg text-sm font-medium border"
+          className="mt-3 px-4 py-2 rounded-lg text-sm font-medium border"
           style={{
             background: "#1e293b",
             borderColor: "#334155",
@@ -646,7 +661,7 @@ export default function PlatformAdminSchoolDetailPage() {
     );
   }
 
-  const tabs: { id: Tab; label: string }[] = [
+  const TABS: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "subscription", label: "Subscription" },
     { id: "principal", label: "Principal" },
@@ -655,7 +670,7 @@ export default function PlatformAdminSchoolDetailPage() {
 
   return (
     <div data-ocid="school_detail.page">
-      {/* Page header */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-6">
         <button
           type="button"
@@ -680,55 +695,49 @@ export default function PlatformAdminSchoolDetailPage() {
           Back to Schools
         </button>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* School avatar */}
-            <div
-              className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white text-sm font-bold"
-              style={{
-                background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
-              }}
-            >
-              {tenant.schoolName
-                .split(" ")
-                .map((w) => w[0])
-                .slice(0, 2)
-                .join("")}
-            </div>
-            <div>
-              <h1 className="text-xl font-bold" style={{ color: "#f1f5f9" }}>
-                {tenant.schoolName}
-              </h1>
-              <div className="flex items-center gap-2 mt-0.5">
+        <div className="flex-1 min-w-0 flex flex-wrap items-center gap-3">
+          <div
+            className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white text-sm font-bold"
+            style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}
+          >
+            {tenant.schoolName
+              .split(" ")
+              .map((w) => w[0])
+              .slice(0, 2)
+              .join("")}
+          </div>
+          <div>
+            <h1 className="text-xl font-bold" style={{ color: "#f1f5f9" }}>
+              {tenant.schoolName}
+            </h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                  tenant.isActive
+                    ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/50"
+                    : "bg-gray-800 text-gray-500 border border-gray-700"
+                }`}
+              >
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                    tenant.isActive
-                      ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/50"
-                      : "bg-gray-800 text-gray-500 border border-gray-700"
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${tenant.isActive ? "bg-emerald-400" : "bg-gray-600"}`}
-                  />
-                  {tenant.isActive ? "Active" : "Inactive"}
-                </span>
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${PLAN_STYLES[tenant.subscriptionPlan] ?? PLAN_STYLES.Basic}`}
-                >
-                  {tenant.subscriptionPlan}
-                </span>
-              </div>
+                  className={`w-1.5 h-1.5 rounded-full ${tenant.isActive ? "bg-emerald-400" : "bg-gray-600"}`}
+                />
+                {tenant.isActive ? "Active" : "Inactive"}
+              </span>
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${PLAN_STYLES[tenant.subscriptionPlan] ?? PLAN_STYLES.Basic}`}
+              >
+                {tenant.subscriptionPlan}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Toggle active button */}
         <div className="flex flex-col items-end gap-1">
           <button
             type="button"
             onClick={handleToggleStatus}
             disabled={togglingStatus}
-            className="self-start sm:self-center px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-white/5"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-white/5"
             style={{
               borderColor: tenant.isActive
                 ? "rgba(248,113,113,0.3)"
@@ -758,14 +767,14 @@ export default function PlatformAdminSchoolDetailPage() {
         </div>
       </div>
 
-      {/* Tab bar */}
+      {/* Tabs */}
       <div
         className="flex gap-1 mb-6 p-1 rounded-xl border"
         style={{ background: "#1a2234", borderColor: "#1e293b" }}
         role="tablist"
         data-ocid="school_detail.tabs"
       >
-        {tabs.map((tab) => (
+        {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -785,12 +794,12 @@ export default function PlatformAdminSchoolDetailPage() {
         ))}
       </div>
 
-      {/* Tab panels */}
+      {/* Panel */}
       <div
         className="rounded-2xl border p-6"
         style={{ background: "#1a2234", borderColor: "#1e293b" }}
       >
-        {/* ── Overview ─────────────────────────────────────────────────────── */}
+        {/* ── OVERVIEW ── */}
         {activeTab === "overview" && (
           <div className="space-y-5" data-ocid="school_detail.overview.panel">
             <p
@@ -818,11 +827,7 @@ export default function PlatformAdminSchoolDetailPage() {
                   label="Next Billing"
                   value={new Date(tenant.nextBillingDate).toLocaleDateString(
                     "en-US",
-                    {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    },
+                    { year: "numeric", month: "long", day: "numeric" },
                   )}
                 />
               )}
@@ -846,7 +851,7 @@ export default function PlatformAdminSchoolDetailPage() {
           </div>
         )}
 
-        {/* ── Subscription ─────────────────────────────────────────────────── */}
+        {/* ── SUBSCRIPTION ── */}
         {activeTab === "subscription" && (
           <div
             className="space-y-6"
@@ -859,7 +864,6 @@ export default function PlatformAdminSchoolDetailPage() {
               Subscription Management
             </p>
 
-            {/* Current plan */}
             <div
               className="p-4 rounded-xl border"
               style={{ background: "#111827", borderColor: "#1e293b" }}
@@ -886,30 +890,16 @@ export default function PlatformAdminSchoolDetailPage() {
                   </span>
                 )}
               </div>
-              {tenant.nextBillingDate && (
-                <p className="text-xs mt-2" style={{ color: "#475569" }}>
-                  Next billing:{" "}
-                  {new Date(tenant.nextBillingDate).toLocaleDateString(
-                    "en-US",
-                    {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    },
-                  )}
-                </p>
-              )}
             </div>
 
-            {/* Change plan */}
-            <div>
+            <div className="space-y-4">
               <p
-                className="text-xs font-semibold uppercase tracking-wide mb-3"
+                className="text-xs font-semibold uppercase tracking-wide"
                 style={{ color: "#94a3b8" }}
               >
                 Change Plan
               </p>
-              <div className="flex gap-2 flex-wrap mb-3">
+              <div className="flex gap-2 flex-wrap">
                 {PLANS.map((p) => (
                   <button
                     key={p}
@@ -926,9 +916,56 @@ export default function PlatformAdminSchoolDetailPage() {
                   </button>
                 ))}
               </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "12px",
+                }}
+              >
+                <div>
+                  <label
+                    htmlFor="sub-expiry"
+                    className="block text-xs font-semibold uppercase tracking-wide mb-1.5"
+                    style={{ color: "#94a3b8" }}
+                  >
+                    Expiry Date
+                  </label>
+                  <input
+                    id="sub-expiry"
+                    type="date"
+                    value={expiryDate}
+                    onChange={(e) => setExpiryDate(e.target.value)}
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.expiry_date.input"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="sub-status"
+                    className="block text-xs font-semibold uppercase tracking-wide mb-1.5"
+                    style={{ color: "#94a3b8" }}
+                  >
+                    Status
+                  </label>
+                  <select
+                    id="sub-status"
+                    value={subStatus}
+                    onChange={(e) => setSubStatus(e.target.value)}
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.sub_status.select"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Paused">Paused</option>
+                    <option value="Expired">Expired</option>
+                  </select>
+                </div>
+              </div>
               {planFeedback && (
                 <p
-                  className="text-xs mb-3"
+                  className="text-xs"
                   style={{
                     color:
                       planFeedback.type === "success" ? "#34d399" : "#f87171",
@@ -945,67 +982,154 @@ export default function PlatformAdminSchoolDetailPage() {
               <button
                 type="button"
                 onClick={handleChangePlan}
-                disabled={
-                  updatingPlan || selectedPlan === tenant.subscriptionPlan
-                }
+                disabled={updatingPlan}
                 className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
                 style={{
-                  background:
-                    selectedPlan === tenant.subscriptionPlan || updatingPlan
-                      ? "#1e293b"
-                      : "#4f46e5",
-                  color:
-                    selectedPlan === tenant.subscriptionPlan || updatingPlan
-                      ? "#475569"
-                      : "#fff",
+                  background: updatingPlan ? "#1e293b" : "#4f46e5",
+                  color: updatingPlan ? "#475569" : "#fff",
                 }}
                 data-ocid="school_detail.change_plan.button"
               >
-                {updatingPlan ? "Updating…" : "Update Plan"}
+                {updatingPlan ? "Updating…" : "Update Subscription"}
               </button>
             </div>
           </div>
         )}
 
-        {/* ── Principal ────────────────────────────────────────────────────── */}
+        {/* ── PRINCIPAL ── */}
         {activeTab === "principal" && (
           <div className="space-y-6" data-ocid="school_detail.principal.panel">
             <p
               className="text-xs font-bold uppercase tracking-widest"
               style={{ color: "#6366f1" }}
             >
-              Principal Account
+              Principal / Admin Account
             </p>
 
-            {/* Info */}
             <div
-              className="p-4 rounded-xl border space-y-3"
+              className="p-5 rounded-xl border space-y-4"
               style={{ background: "#111827", borderColor: "#1e293b" }}
             >
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                  style={{
-                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                  }}
-                >
-                  P
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="pa-pname"
+                    className="block text-xs font-semibold mb-1.5 uppercase tracking-wide"
+                    style={{ color: "#94a3b8" }}
+                  >
+                    Principal Name
+                  </label>
+                  <input
+                    id="pa-pname"
+                    type="text"
+                    value={principalName}
+                    onChange={(e) => setPrincipalName(e.target.value)}
+                    placeholder="Full name"
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.principal_name.input"
+                  />
                 </div>
                 <div>
-                  <p
-                    className="text-sm font-semibold"
-                    style={{ color: "#f1f5f9" }}
+                  <label
+                    htmlFor="pa-uname"
+                    className="block text-xs font-semibold mb-1.5 uppercase tracking-wide"
+                    style={{ color: "#94a3b8" }}
                   >
-                    Principal
-                  </p>
-                  <p className="text-xs" style={{ color: "#64748b" }}>
-                    {tenant.adminEmail}
-                  </p>
+                    Principal Username
+                  </label>
+                  <input
+                    id="pa-uname"
+                    type="text"
+                    value={principalUserName}
+                    onChange={(e) => setPrincipalUserName(e.target.value)}
+                    placeholder="Login username"
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.principal_username.input"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pa-email"
+                    className="block text-xs font-semibold mb-1.5 uppercase tracking-wide"
+                    style={{ color: "#94a3b8" }}
+                  >
+                    Email Address
+                  </label>
+                  <input
+                    id="pa-email"
+                    type="email"
+                    value={principalEmail}
+                    onChange={(e) => setPrincipalEmail(e.target.value)}
+                    placeholder="principal@school.edu"
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.principal_email.input"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="pa-phone"
+                    className="block text-xs font-semibold mb-1.5 uppercase tracking-wide"
+                    style={{ color: "#94a3b8" }}
+                  >
+                    Principal Mobile
+                  </label>
+                  <input
+                    id="pa-phone"
+                    type="tel"
+                    value={principalMobileNo}
+                    onChange={(e) => setPrincipalMobileNo(e.target.value)}
+                    placeholder="+91 9876543210"
+                    className={inputClass}
+                    style={inputStyle}
+                    data-ocid="school_detail.principal_mobile.input"
+                  />
                 </div>
               </div>
+              {principalFeedback && (
+                <p
+                  className="text-xs px-3 py-2 rounded-lg"
+                  style={{
+                    background:
+                      principalFeedback.type === "success"
+                        ? "rgba(52,211,153,0.1)"
+                        : "rgba(248,113,113,0.1)",
+                    color:
+                      principalFeedback.type === "success"
+                        ? "#34d399"
+                        : "#f87171",
+                    border:
+                      principalFeedback.type === "success"
+                        ? "1px solid rgba(52,211,153,0.25)"
+                        : "1px solid rgba(248,113,113,0.25)",
+                  }}
+                  data-ocid={
+                    principalFeedback.type === "success"
+                      ? "school_detail.principal.success_state"
+                      : "school_detail.principal.error_state"
+                  }
+                >
+                  {principalFeedback.text}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handleSavePrincipal}
+                disabled={savingPrincipal}
+                className="px-5 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60"
+                style={{
+                  background: savingPrincipal ? "#1e293b" : "#4f46e5",
+                  color: savingPrincipal ? "#475569" : "#fff",
+                }}
+                data-ocid="school_detail.save_principal.button"
+              >
+                {savingPrincipal ? "Saving…" : "Save Changes"}
+              </button>
             </div>
 
-            {/* Reset password */}
+            {/* Reset Password */}
             <div>
               <p
                 className="text-xs font-semibold uppercase tracking-wide mb-3"
@@ -1032,7 +1156,7 @@ export default function PlatformAdminSchoolDetailPage() {
               <div className="flex gap-3">
                 <div style={{ position: "relative", flex: 1 }}>
                   <input
-                    type={showNewPassword ? "text" : "password"}
+                    type={showPw ? "text" : "password"}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="New password (min 6 chars)"
@@ -1042,10 +1166,8 @@ export default function PlatformAdminSchoolDetailPage() {
                   />
                   <button
                     type="button"
-                    onClick={() => setShowNewPassword((v) => !v)}
-                    aria-label={
-                      showNewPassword ? "Hide password" : "Show password"
-                    }
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? "Hide" : "Show"}
                     style={{
                       position: "absolute",
                       right: "10px",
@@ -1054,13 +1176,12 @@ export default function PlatformAdminSchoolDetailPage() {
                       background: "none",
                       border: "none",
                       cursor: "pointer",
-                      padding: "2px",
                       color: "#64748b",
                       display: "flex",
                       alignItems: "center",
                     }}
                   >
-                    {showNewPassword ? (
+                    {showPw ? (
                       <svg
                         aria-hidden="true"
                         xmlns="http://www.w3.org/2000/svg"
@@ -1115,7 +1236,7 @@ export default function PlatformAdminSchoolDetailPage() {
           </div>
         )}
 
-        {/* ── Reminders ────────────────────────────────────────────────────── */}
+        {/* ── REMINDERS ── */}
         {activeTab === "reminders" && (
           <div className="space-y-6" data-ocid="school_detail.reminders.panel">
             <p
@@ -1125,7 +1246,6 @@ export default function PlatformAdminSchoolDetailPage() {
               Payment Reminders
             </p>
 
-            {/* Send new reminder */}
             <div>
               <p
                 className="text-xs font-semibold uppercase tracking-wide mb-2"
@@ -1179,7 +1299,6 @@ export default function PlatformAdminSchoolDetailPage() {
               </button>
             </div>
 
-            {/* Reminder log for this school */}
             <div>
               <p
                 className="text-xs font-semibold uppercase tracking-wide mb-3"
@@ -1219,31 +1338,27 @@ export default function PlatformAdminSchoolDetailPage() {
                       style={{ background: "#111827", borderColor: "#1e293b" }}
                       data-ocid={`school_detail.reminder.item.${i + 1}`}
                     >
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                        <p className="text-sm" style={{ color: "#e2e8f0" }}>
-                          {r.message}
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-xs" style={{ color: "#64748b" }}>
+                          {new Date(r.sentAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
                         </p>
                         <span
-                          className={`flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                            r.status === "Delivered"
-                              ? "bg-emerald-900/40 text-emerald-400"
-                              : r.status === "Failed"
-                                ? "bg-red-900/40 text-red-400"
-                                : "bg-amber-900/40 text-amber-400"
-                          }`}
+                          className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            background: "rgba(52,211,153,0.1)",
+                            color: "#34d399",
+                            border: "1px solid rgba(52,211,153,0.2)",
+                          }}
                         >
                           {r.status}
                         </span>
                       </div>
-                      <p className="text-[11px]" style={{ color: "#475569" }}>
-                        Sent by {r.sentBy} —{" "}
-                        {new Date(r.sentAt).toLocaleString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                      <p className="text-sm" style={{ color: "#e2e8f0" }}>
+                        {r.message}
                       </p>
                     </div>
                   ))}

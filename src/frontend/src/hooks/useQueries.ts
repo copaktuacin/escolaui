@@ -1,193 +1,149 @@
 /**
- * React Query hooks for EscolaUI — all data fetching goes through here.
- * Pattern: isDemoMode() → use mockData (no network), else → real API via api.ts
+ * React Query hooks for EscolaUI — fully dynamic, zero hardcoded data.
+ * All hooks call the live API via api.ts. No mock data, no isDemoMode().
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-import {
-  type Application,
-  type AttendanceRecord,
-  type ChartDataPoint,
-  type FeeActivity,
-  type Invoice,
-  type Student,
-  type TimetableEntry,
-  type UpcomingEvent,
-  mockApplications,
-  mockAttendanceRecords,
-  mockChartData,
-  mockEvents,
-  mockFeeActivities,
-  mockInvoices,
-  mockStudents,
-  withDelay,
-} from "../lib/mockData";
 
-// ─── Types for live API ──────────────────────────────────────────────────────
+// ─── Shared response normalizers ─────────────────────────────────────────────
+
+/** Extract any array from an unknown response, checking every common envelope key. */
+function extractAnyArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    for (const key of [
+      "data",
+      "Data",
+      "items",
+      "Items",
+      "results",
+      "Results",
+      "value",
+      "Value",
+      "list",
+      "List",
+      "records",
+      "Records",
+    ]) {
+      if (Array.isArray(r[key])) return r[key] as unknown[];
+    }
+    const found = Object.values(r).find((v) => Array.isArray(v));
+    if (found) return found as unknown[];
+  }
+  return [];
+}
+
+/**
+ * Unwrap the .NET backend's { success: bool, data: ..., total: ... } envelope.
+ * Called before extractAnyArray/extractTotal so downstream code always sees
+ * the actual payload, never the outer envelope object.
+ */
+function unwrapSuccessEnvelope(raw: unknown): unknown {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const r = raw as Record<string, unknown>;
+    if ("success" in r && "data" in r) {
+      return r.data ?? raw;
+    }
+  }
+  return raw;
+}
+
+function extractTotal(raw: unknown, fallback: number): number {
+  if (!raw || typeof raw !== "object") return fallback;
+  const r = raw as Record<string, unknown>;
+  return (
+    (r.total as number | undefined) ??
+    (r.Total as number | undefined) ??
+    (r.totalCount as number | undefined) ??
+    (r.TotalCount as number | undefined) ??
+    (r.count as number | undefined) ??
+    (r.Count as number | undefined) ??
+    fallback
+  );
+}
+
+function normalizeArray<T>(raw: unknown): T[] {
+  return extractAnyArray(raw) as T[];
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type DashboardStats = {
   totalStudents: number;
   totalTeachers: number;
+  totalClasses: number;
+  totalSections: number;
+  presentToday: number;
+  absentToday: number;
+  totalFeeCollected: number;
+  pendingFees: number;
+  totalAdmissions: number;
+  pendingAdmissions: number;
+  upcomingExams: number;
+  activeOnlineClasses: number;
+  totalNotifications: number;
+  unreadNotifications: number;
   totalRevenue: number;
   attendanceRate: number;
 };
 
-export type DashboardChartResponse = {
-  labels: string[];
-  datasets: { label: string; data: number[] }[];
+export type AcademicYearDto = {
+  // Primary ID field returned by the API
+  academicYearId?: number;
+  AcademicYearId?: number;
+  // Legacy / fallback ID fields
+  Id?: number;
+  id?: number;
+  YearLabel?: string;
+  yearLabel?: string;
+  StartDate?: string;
+  startDate?: string;
+  EndDate?: string;
+  endDate?: string;
+  IsCurrent?: boolean;
+  isCurrent?: boolean;
+  is_current?: boolean;
 };
 
-export type AttendanceSavePayload = {
-  date: string;
-  classId: number;
-  sectionId?: string;
-  records: { studentId: string; status: "present" | "absent" | "late" }[];
-};
-
-export type AttendanceStats = {
-  presentCount: number;
-  absentCount: number;
-  lateCount: number;
-  percentage: number;
-};
-
-export type AttendanceStatsMonthly = {
-  totalDays: number;
-  presentAvg: number;
-  absentAvg: number;
-  lateAvg: number;
-};
-
-export type PaymentPayload = {
-  amount: number;
-  method: string;
-  transactionId: string;
-};
-
-export type ScheduleSlotUpdate = {
-  subject: string;
-  teacher: string;
-  room: string;
-};
-
-export type Concession = {
-  id: string;
-  name: string;
-  percentage: number;
-};
-
-// ─── Class-specific mock timetable generator ─────────────────────────────────
-
-const CLASS_6_7_SUBJECTS = [
-  "Math",
-  "English",
-  "Science",
-  "Hindi",
-  "Social Studies",
-  "Art",
-  "PE",
-  "Computer",
-];
-const CLASS_8_9_SUBJECTS = [
-  "Physics",
-  "Chemistry",
-  "Biology",
-  "Math",
-  "English",
-  "History",
-  "Geography",
-  "Computer",
-];
-const CLASS_10_11_SUBJECTS = [
-  "Physics",
-  "Chemistry",
-  "Biology",
-  "Math",
-  "English",
-  "Economics",
-  "Accounts",
-  "Computer",
-];
-
-const TEACHERS_BY_SUBJECT: Record<string, string[]> = {
-  Math: ["Mr. Ravi Shankar", "Mrs. Anita Rao"],
-  English: ["Ms. Amara Okafor", "Mr. James Osei"],
-  Science: ["Dr. Priya Nair", "Mr. Samuel Eze"],
-  Hindi: ["Mrs. Kavita Sharma", "Mr. Deepak Patel"],
-  "Social Studies": ["Mr. David Mensah", "Ms. Grace Kone"],
-  Art: ["Ms. Lena Kwame", "Mr. Aaron Diallo"],
-  PE: ["Coach Mark Owusu", "Coach Sola Adeyemi"],
-  Computer: ["Mr. Victor Osei", "Ms. Stella Nwosu"],
-  Physics: ["Dr. James Bello", "Mr. Femi Adeyemi"],
-  Chemistry: ["Dr. Priya Nair", "Ms. Aisha Hassan"],
-  Biology: ["Dr. Ngozi Chukwu", "Mr. Emeka Obi"],
-  History: ["Mr. David Mensah", "Mrs. Carol Yeboah"],
-  Geography: ["Ms. Grace Kone", "Mr. Kwame Asante"],
-  Economics: ["Mr. Tobias Mwangi", "Mrs. Fatima Al-Hassan"],
-  Accounts: ["Mr. James Bello", "Mrs. Amaka Okafor"],
-};
-
-const ROOMS = [
-  "Room 101",
-  "Room 102",
-  "Room 203",
-  "Lab A",
-  "Lab B",
-  "Hall C",
-  "Gym",
-  "Room 305",
-];
-
-function getSubjectsForClass(classId: number): string[] {
-  if (classId <= 7) return CLASS_6_7_SUBJECTS;
-  if (classId <= 9) return CLASS_8_9_SUBJECTS;
-  return CLASS_10_11_SUBJECTS;
+/** Extract the numeric ID from an AcademicYearDto regardless of field casing. */
+export function getAcademicYearId(yr: AcademicYearDto): number {
+  return yr.academicYearId ?? yr.AcademicYearId ?? yr.Id ?? yr.id ?? 0;
 }
 
-function generateMockTimetable(
-  classId: number,
-  sectionId = 1,
-): TimetableEntry[] {
-  const subjects = getSubjectsForClass(classId);
-  const days: TimetableEntry["day"][] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-  const entries: TimetableEntry[] = [];
-  // Use classId + sectionId as seed for rotation to ensure different timetables per class
-  const seed = (classId * 7 + sectionId * 3) % subjects.length;
-
-  for (let d = 0; d < days.length; d++) {
-    const day = days[d];
-    for (let p = 1; p <= 8; p++) {
-      // Some free periods (skip period 4 on random days based on class)
-      const isFree = (classId + d + p) % 9 === 0;
-      if (isFree) continue;
-
-      const subjectIdx = (seed + d * 3 + p * 2) % subjects.length;
-      const subject = subjects[subjectIdx];
-      const teacherList = TEACHERS_BY_SUBJECT[subject] ?? ["Mr. Staff"];
-      const teacher = teacherList[(d + p + classId) % teacherList.length];
-      const room = ROOMS[(d * 8 + p + sectionId) % ROOMS.length];
-
-      entries.push({
-        day,
-        period: p,
-        subject,
-        teacher,
-        room,
-      });
-    }
-  }
-  return entries;
+/** Return true if this year is marked as current (all casing variants). */
+export function isCurrentYear(yr: AcademicYearDto): boolean {
+  return (
+    yr.isCurrent === true || yr.IsCurrent === true || yr.is_current === true
+  );
 }
 
-// ─── Students API Types (exact DTO mapping) ───────────────────────────────────
+export type ClassDto = {
+  // Primary ID returned by /classes/academicYear/{id} endpoint
+  classId?: number;
+  ClassId?: number;
+  // Legacy/fallback fields
+  Id?: number;
+  id?: number;
+  // Primary name returned by API
+  className?: string;
+  ClassName?: string;
+  GradeLevel?: number;
+  gradeLevel?: number;
+  AcademicYearId?: number;
+  academicYearId?: number;
+};
 
-export type StudentParentSimpleDto = {
-  parentId: number;
-  fullName: string;
-  phone?: string;
-  email?: string;
+export type SectionDto = {
+  Id: number;
+  id?: number;
+  SectionName: string;
+  sectionName?: string;
+  ClassId: number;
+  classId?: number;
+  Capacity?: number;
+  capacity?: number;
 };
 
 export type StudentListItemDto = {
@@ -200,6 +156,13 @@ export type StudentListItemDto = {
   sectionId?: string;
   status: string;
   createdAt: string;
+};
+
+export type StudentParentSimpleDto = {
+  parentId: number;
+  fullName: string;
+  phone?: string;
+  email?: string;
 };
 
 export type StudentDetailDto = {
@@ -218,14 +181,12 @@ export type StudentDetailDto = {
 };
 
 export type CreateStudentRequest = {
-  name: string;
-  rollNo?: string;
-  classId: number;
-  sectionId?: string;
-  dob?: string;
-  gender?: string;
-  photo?: string;
-  parentInfo?: { name?: string; phone?: string; email?: string };
+  FirstName: string;
+  LastName: string;
+  DateOfBirth: string;
+  ClassId: number;
+  Section: string;
+  RollNumber: string;
 };
 
 export type CreateStudentResponse = {
@@ -245,742 +206,18 @@ export type UpdateStudentRequest = {
   gender?: string;
   photo?: string;
   status?: string;
-  parentInfo?: {
-    parentId?: number;
-    name?: string;
-    phone?: string;
-    email?: string;
-  };
 };
-
-// ─── Mock students in StudentListItemDto shape ────────────────────────────────
-
-const MOCK_STUDENT_LIST: StudentListItemDto[] = [
-  {
-    studentId: 101,
-    enrollmentNo: "ES-2023001",
-    fullName: "Aiden Clarke",
-    gender: "M",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-10T08:00:00Z",
-  },
-  {
-    studentId: 102,
-    enrollmentNo: "ES-2023002",
-    fullName: "Blessing Nwosu",
-    gender: "F",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-11T08:00:00Z",
-  },
-  {
-    studentId: 103,
-    enrollmentNo: "ES-2023003",
-    fullName: "Chidera Obi",
-    gender: "M",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-12T08:00:00Z",
-  },
-  {
-    studentId: 104,
-    enrollmentNo: "ES-2023004",
-    fullName: "Diana Petrov",
-    gender: "F",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-13T08:00:00Z",
-  },
-  {
-    studentId: 105,
-    enrollmentNo: "ES-2023005",
-    fullName: "Elijah Santos",
-    gender: "M",
-    classId: 10,
-    sectionId: "B",
-    status: "Active",
-    createdAt: "2024-01-14T08:00:00Z",
-  },
-  {
-    studentId: 106,
-    enrollmentNo: "ES-2023006",
-    fullName: "Fatima Al-Hassan",
-    gender: "F",
-    classId: 10,
-    sectionId: "B",
-    status: "Active",
-    createdAt: "2024-01-15T08:00:00Z",
-  },
-  {
-    studentId: 107,
-    enrollmentNo: "ES-2023007",
-    fullName: "Gabriel Kim",
-    gender: "M",
-    classId: 10,
-    sectionId: "B",
-    status: "Inactive",
-    createdAt: "2024-01-16T08:00:00Z",
-  },
-  {
-    studentId: 108,
-    enrollmentNo: "ES-2023008",
-    fullName: "Hannah Müller",
-    gender: "F",
-    classId: 9,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-17T08:00:00Z",
-  },
-  {
-    studentId: 109,
-    enrollmentNo: "ES-2023009",
-    fullName: "Ivan Petrov",
-    gender: "M",
-    classId: 9,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-18T08:00:00Z",
-  },
-  {
-    studentId: 110,
-    enrollmentNo: "ES-2023010",
-    fullName: "Jasmine Osei",
-    gender: "F",
-    classId: 9,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-19T08:00:00Z",
-  },
-  {
-    studentId: 111,
-    enrollmentNo: "ES-2023011",
-    fullName: "Kevin Nkrumah",
-    gender: "M",
-    classId: 9,
-    sectionId: "B",
-    status: "Active",
-    createdAt: "2024-01-20T08:00:00Z",
-  },
-  {
-    studentId: 112,
-    enrollmentNo: "ES-2023012",
-    fullName: "Layla Farooq",
-    gender: "F",
-    classId: 9,
-    sectionId: "B",
-    status: "Active",
-    createdAt: "2024-01-21T08:00:00Z",
-  },
-  {
-    studentId: 113,
-    enrollmentNo: "ES-2023013",
-    fullName: "Marcus Owusu",
-    gender: "M",
-    classId: 8,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-22T08:00:00Z",
-  },
-  {
-    studentId: 114,
-    enrollmentNo: "ES-2023014",
-    fullName: "Nina Johansson",
-    gender: "F",
-    classId: 8,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-23T08:00:00Z",
-  },
-  {
-    studentId: 115,
-    enrollmentNo: "ES-2023015",
-    fullName: "Omar Abdullah",
-    gender: "M",
-    classId: 8,
-    sectionId: "B",
-    status: "Active",
-    createdAt: "2024-01-24T08:00:00Z",
-  },
-  {
-    studentId: 116,
-    enrollmentNo: "ES-2023016",
-    fullName: "Priya Sharma",
-    gender: "F",
-    classId: 7,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-25T08:00:00Z",
-  },
-  {
-    studentId: 117,
-    enrollmentNo: "ES-2023017",
-    fullName: "Quincy Mwangi",
-    gender: "M",
-    classId: 7,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-26T08:00:00Z",
-  },
-  {
-    studentId: 118,
-    enrollmentNo: "ES-2023018",
-    fullName: "Rose Adeyemi",
-    gender: "F",
-    classId: 6,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-27T08:00:00Z",
-  },
-];
-
-const MOCK_STUDENT_DETAILS: Record<number, StudentDetailDto> = {
-  101: {
-    studentId: 101,
-    enrollmentNo: "ES-2023001",
-    fullName: "Aiden Clarke",
-    dateOfBirth: "2010-05-15",
-    gender: "M",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-10T08:00:00Z",
-    address: "14 Victoria Island, Lagos, Nigeria",
-    parents: [
-      {
-        parentId: 201,
-        fullName: "Charles Clarke",
-        phone: "+234-801-234-5678",
-        email: "charles.clarke@gmail.com",
-      },
-      {
-        parentId: 202,
-        fullName: "Mary Clarke",
-        phone: "+234-802-345-6789",
-        email: "mary.clarke@gmail.com",
-      },
-    ],
-  },
-  102: {
-    studentId: 102,
-    enrollmentNo: "ES-2023002",
-    fullName: "Blessing Nwosu",
-    dateOfBirth: "2010-08-22",
-    gender: "F",
-    classId: 10,
-    sectionId: "A",
-    status: "Active",
-    createdAt: "2024-01-11T08:00:00Z",
-    address: "22 Broad Street, Abuja, FCT, Nigeria",
-    parents: [
-      {
-        parentId: 203,
-        fullName: "Emmanuel Nwosu",
-        phone: "+234-803-456-7890",
-        email: "e.nwosu@gmail.com",
-      },
-    ],
-  },
-};
-
-// ─── Dashboard ───────────────────────────────────────────────────────────────
-
-export function useDashboardStats() {
-  return useQuery<DashboardStats>({
-    queryKey: ["dashboard", "stats"],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return {
-          totalStudents: 2450,
-          totalTeachers: 187,
-          totalRevenue: 112400,
-          attendanceRate: 96.2,
-        };
-      }
-      const res = await api.get<DashboardStats>("/dashboard/stats");
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load stats");
-      return res.data;
-    },
-  });
-}
-
-export function useDashboardChart(period: "monthly" | "weekly" = "monthly") {
-  return useQuery<ChartDataPoint[]>({
-    queryKey: ["dashboard", "chart", period],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return mockChartData;
-      }
-      const res = await api.get<DashboardChartResponse>(
-        `/dashboard/chart?period=${period}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load chart");
-      return res.data.labels.map((label, i) => ({
-        month: label,
-        applications: res.data!.datasets[0]?.data[i] ?? 0,
-        enrolled: res.data!.datasets[1]?.data[i] ?? 0,
-      }));
-    },
-  });
-}
-
-export function useUpcomingEvents(limit = 5) {
-  return useQuery<UpcomingEvent[]>({
-    queryKey: ["events", "upcoming", limit],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return mockEvents.slice(0, limit);
-      }
-      const res = await api.get<UpcomingEvent[]>(
-        `/events/upcoming?limit=${limit}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load events");
-      return res.data;
-    },
-  });
-}
-
-export function useRecentFeeActivities(limit = 10) {
-  return useQuery<FeeActivity[]>({
-    queryKey: ["fees", "recent", limit],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return mockFeeActivities.slice(0, limit);
-      }
-      const res = await api.get<FeeActivity[]>(`/fees/recent?limit=${limit}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load fee activities");
-      return res.data;
-    },
-  });
-}
-
-// ─── Admissions ──────────────────────────────────────────────────────────────
-
-export function useAdmissions(params: {
-  status?: string;
-  page?: number;
-  limit?: number;
-}) {
-  const { status = "", page = 1, limit = 10 } = params;
-  return useQuery<{ data: Application[]; total: number }>({
-    queryKey: ["admissions", status, page, limit],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        const filtered =
-          status && status !== "all"
-            ? mockApplications.filter((a) => a.status === status)
-            : mockApplications;
-        return { data: filtered, total: filtered.length };
-      }
-      const qs = new URLSearchParams();
-      if (status && status !== "all") qs.set("status", status);
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      const res = await api.get<{ data: Application[]; total: number }>(
-        `/admissions?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load admissions");
-      return res.data;
-    },
-  });
-}
-
-export function useVerifyAdmission() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      id,
-      status,
-      remarks,
-    }: {
-      id: string;
-      status: string;
-      remarks?: string;
-    }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        return { enrollmentId: `ENR-${Date.now()}`, status };
-      }
-      const res = await api.post<{ enrollmentId: string; status: string }>(
-        `/admissions/${id}/verify`,
-        { status, remarks },
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Verify failed");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admissions"] }),
-  });
-}
-
-export function useUpdateAdmissionStatus() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { id, status };
-      }
-      const res = await api.put<Application>(`/admissions/${id}`, { status });
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Update failed");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admissions"] }),
-  });
-}
-
-export function useSubmitApplication() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (payload: Record<string, unknown>) => {
-      if (isDemoMode()) {
-        await withDelay(null, 1000);
-        return {
-          id: `APP-${Date.now()}`,
-          enrollmentId: `ENR-${new Date().getFullYear()}-${String(1000 + Math.floor(Math.random() * 9000)).padStart(4, "0")}`,
-          status: "pending",
-        };
-      }
-      const res = await api.post<{
-        id: string;
-        enrollmentId: string;
-        status: string;
-      }>("/admissions", payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Submission failed");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admissions"] }),
-  });
-}
-
-export function useUploadDocument() {
-  return useMutation({
-    mutationFn: async ({
-      id,
-      file,
-      type,
-    }: {
-      id: string;
-      file: File;
-      type: string;
-    }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 800);
-        return { documentUrl: URL.createObjectURL(file), type };
-      }
-      const form = new FormData();
-      form.append("file", file);
-      form.append("type", type);
-      const token = localStorage.getItem("accessToken");
-      const res = await fetch(
-        `https://escola.doorstepgarage.in/api/admissions/${id}/documents`,
-        {
-          method: "POST",
-          headers: {
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: form,
-        },
-      );
-      if (!res.ok) throw new Error("Upload failed");
-      const json = await res.json();
-      return json.data ?? json;
-    },
-  });
-}
-
-// ─── Attendance ───────────────────────────────────────────────────────────────
-
-export function useStudentsForClass(cls: string, section = "") {
-  return useQuery<Student[]>({
-    queryKey: ["students", cls, section],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return mockStudents.filter((s) => s.class === cls);
-      }
-      const qs = new URLSearchParams({ class: cls });
-      if (section) qs.set("section", section);
-      const res = await api.get<Student[]>(`/students?${qs}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load students");
-      return res.data;
-    },
-    enabled: !!cls,
-  });
-}
-
-export function useAttendanceRecords(date: string, cls: string, section = "") {
-  return useQuery<AttendanceRecord[]>({
-    queryKey: ["attendance", date, cls, section],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return mockAttendanceRecords;
-      }
-      // Map class string like "10" to classId; section is already a string letter ("A", "B", etc.)
-      const classNum = Number.parseInt(cls);
-      const sectionCode = cls.replace(/^\d+/, "") || section;
-
-      const qs = new URLSearchParams({ date });
-      if (!Number.isNaN(classNum)) qs.set("classId", String(classNum));
-      if (sectionCode) qs.set("sectionId", sectionCode);
-
-      const res = await api.get<{ data: AttendanceRecord[]; total: number }>(
-        `/attendance?${qs}`,
-      );
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to load attendance");
-      // Handle both envelope { data: [] } and direct array
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object)) {
-        return (raw as { data: AttendanceRecord[] }).data;
-      }
-      return (raw as AttendanceRecord[]) ?? [];
-    },
-    enabled: !!date && !!cls,
-  });
-}
-
-export function useSaveAttendance() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (payload: AttendanceSavePayload) => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        return { success: true };
-      }
-      const res = await api.post<{ success: boolean }>("/attendance", payload);
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to save attendance");
-      return res.data ?? { success: true };
-    },
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({
-        queryKey: ["attendance", vars.date, String(vars.classId)],
-      });
-    },
-  });
-}
-
-export function useAttendanceStats(classId: number, month: string) {
-  return useQuery<AttendanceStatsMonthly>({
-    queryKey: ["attendance", "stats", classId, month],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return {
-          totalDays: 22,
-          presentAvg: 19.5,
-          absentAvg: 1.8,
-          lateAvg: 0.7,
-        };
-      }
-      const qs = new URLSearchParams({ classId: String(classId), month });
-      const res = await api.get<AttendanceStatsMonthly>(
-        `/attendance/stats?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load stats");
-      return res.data;
-    },
-    enabled: !!classId && !!month,
-  });
-}
-
-// ─── Students (full CRUD, exact DTO mapping) ─────────────────────────────────
-
-export function useStudents(params: {
-  class?: number;
-  section?: string;
-  page?: number;
-  limit?: number;
-  search?: string;
-}) {
-  const { class: classId, section, page = 1, limit = 10, search = "" } = params;
-  return useQuery<{ data: StudentListItemDto[]; total: number }>({
-    queryKey: ["students-v2", classId, section, page, limit, search],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        let filtered = MOCK_STUDENT_LIST;
-        if (classId) filtered = filtered.filter((s) => s.classId === classId);
-        if (section) filtered = filtered.filter((s) => s.sectionId === section);
-        if (search) {
-          const q = search.toLowerCase();
-          filtered = filtered.filter(
-            (s) =>
-              s.fullName.toLowerCase().includes(q) ||
-              s.enrollmentNo.toLowerCase().includes(q),
-          );
-        }
-        const start = (page - 1) * limit;
-        return {
-          data: filtered.slice(start, start + limit),
-          total: filtered.length,
-        };
-      }
-      const qs = new URLSearchParams();
-      if (classId) qs.set("class", String(classId));
-      if (section) qs.set("section", String(section));
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      if (search) qs.set("search", search);
-      const res = await api.get<{ data: StudentListItemDto[]; total: number }>(
-        `/students?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load students");
-      return res.data;
-    },
-  });
-}
-
-export function useStudentDetail(id: number) {
-  return useQuery<StudentDetailDto>({
-    queryKey: ["students-v2", "detail", id],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        const detail = MOCK_STUDENT_DETAILS[id];
-        if (detail) return detail;
-        const listItem = MOCK_STUDENT_LIST.find((s) => s.studentId === id);
-        if (!listItem) throw new Error("Student not found");
-        return {
-          ...listItem,
-          parents: [],
-        };
-      }
-      const res = await api.get<StudentDetailDto>(`/students/${id}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Student not found");
-      return res.data;
-    },
-    enabled: !!id,
-  });
-}
-
-export function useCreateStudent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (
-      payload: CreateStudentRequest,
-    ): Promise<CreateStudentResponse> => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        const newId = Date.now();
-        return {
-          studentId: newId,
-          enrollmentNo: `ES-${newId}`,
-          fullName: payload.name,
-          classId: payload.classId,
-          status: "Active",
-        };
-      }
-      const res = await api.post<CreateStudentResponse>("/students", payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create student");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["students-v2"] }),
-  });
-}
-
-export function useUpdateStudent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      id,
-      payload,
-    }: {
-      id: number;
-      payload: UpdateStudentRequest;
-    }): Promise<StudentDetailDto> => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        const existing = MOCK_STUDENT_DETAILS[id];
-        const listItem = MOCK_STUDENT_LIST.find((s) => s.studentId === id);
-        return {
-          studentId: id,
-          enrollmentNo: listItem?.enrollmentNo ?? `ES-${id}`,
-          fullName:
-            payload.name ?? existing?.fullName ?? listItem?.fullName ?? "",
-          dateOfBirth: payload.dob ?? existing?.dateOfBirth,
-          gender: payload.gender ?? existing?.gender ?? listItem?.gender,
-          classId: payload.classId ?? existing?.classId ?? listItem?.classId,
-          sectionId:
-            payload.sectionId ?? existing?.sectionId ?? listItem?.sectionId,
-          status:
-            payload.status ?? existing?.status ?? listItem?.status ?? "Active",
-          createdAt:
-            existing?.createdAt ??
-            listItem?.createdAt ??
-            new Date().toISOString(),
-          address: existing?.address,
-          parents: existing?.parents ?? [],
-        };
-      }
-      const res = await api.put<StudentDetailDto>(`/students/${id}`, payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update student");
-      return res.data;
-    },
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["students-v2"] });
-      qc.invalidateQueries({ queryKey: ["students-v2", "detail", vars.id] });
-    },
-  });
-}
-
-export function useDeleteStudent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: number): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
-      }
-      const res = await api.delete<{ success: boolean }>(`/students/${id}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to delete student");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["students-v2"] }),
-  });
-}
-
-// ─── Teachers ────────────────────────────────────────────────────────────────
 
 export type TeacherListItemDto = {
   teacherId: number;
   employeeCode: string;
   fullName: string;
+  email?: string;
+  phone?: string;
   qualification?: string;
+  joinDate?: string;
   status: string;
   createdAt: string;
-};
-
-export type TeacherRosterStudentDto = {
-  studentId: number;
-  studentName: string;
-  classId?: number;
-  sectionId?: string;
 };
 
 export type TeacherDetailDto = {
@@ -993,388 +230,160 @@ export type TeacherDetailDto = {
   status: string;
   createdAt: string;
   subjects: string[];
-  roster: TeacherRosterStudentDto[];
+  roster: {
+    studentId: number;
+    studentName: string;
+    classId?: number;
+    sectionId?: string;
+  }[];
 };
 
 export type CreateTeacherRequest = {
-  userId: number;
-  employeeCode: string;
-  qualification?: string;
-  joinDate: string;
-  classAssigned?: number;
-  subjectIds?: number[];
+  FullName: string;
+  Email: string;
+  Phone: string;
+  EmployeeCode: string;
+  Password: string;
+  JoinDate?: string;
 };
 
 export type UpdateTeacherRequest = {
   employeeCode?: string;
   qualification?: string;
-  specialization?: string;
   joinDate?: string;
   status?: string;
-  classAssigned?: number;
-  subjectIds?: number[];
+  FullName?: string;
+  Email?: string;
+  Phone?: string;
 };
 
-export type GradebookEntry = {
-  studentId: number;
-  studentName: string;
-  marks: { term: string; score: number }[];
-  grade: string;
+export type AttendanceSavePayload = {
+  date: string;
+  classId: number | string;
+  sectionId?: string;
+  records: {
+    studentId: string | number;
+    status: "present" | "absent" | "late";
+  }[];
 };
 
-export type CreateLessonPlanRequest = {
-  subjectId: number;
-  classId: number;
-  lessonDate: string;
-  objectives?: string;
-  content?: string;
-  resources?: string;
+export type TimetableEntry = {
+  day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | string;
+  period: number;
+  subject: string;
+  teacher: string;
+  room: string;
 };
 
-const mockTeachers: TeacherListItemDto[] = [
-  {
-    teacherId: 1,
-    employeeCode: "EMP001",
-    fullName: "John Smith",
-    qualification: "B.Sc. Education",
-    status: "Active",
-    createdAt: "2023-06-01T08:00:00Z",
-  },
-  {
-    teacherId: 2,
-    employeeCode: "EMP002",
-    fullName: "Amara Okafor",
-    qualification: "M.A. English",
-    status: "Active",
-    createdAt: "2023-08-15T09:30:00Z",
-  },
-  {
-    teacherId: 3,
-    employeeCode: "EMP003",
-    fullName: "Ravi Shankar",
-    qualification: "M.Sc. Mathematics",
-    status: "Active",
-    createdAt: "2024-01-10T07:45:00Z",
-  },
-  {
-    teacherId: 4,
-    employeeCode: "EMP004",
-    fullName: "Priya Nair",
-    qualification: "B.Ed. Chemistry",
-    status: "Active",
-    createdAt: "2024-03-20T08:00:00Z",
-  },
-  {
-    teacherId: 5,
-    employeeCode: "EMP005",
-    fullName: "David Mensah",
-    qualification: "M.Ed. History",
-    status: "Inactive",
-    createdAt: "2022-11-01T10:00:00Z",
-  },
-];
-
-const mockTeacherDetail: TeacherDetailDto = {
-  teacherId: 1,
-  userId: 5,
-  employeeCode: "EMP001",
-  fullName: "John Smith",
-  qualification: "B.Sc. Education",
-  joinDate: "2023-06-01",
-  status: "Active",
-  createdAt: "2023-06-01T08:00:00Z",
-  subjects: ["Mathematics", "Physics"],
-  roster: [
-    { studentId: 101, studentName: "Raj Kumar", classId: 5, sectionId: "A" },
-    { studentId: 102, studentName: "Priya Singh", classId: 5, sectionId: "A" },
-    { studentId: 103, studentName: "Arjun Mehta", classId: 5, sectionId: "B" },
-    {
-      studentId: 104,
-      studentName: "Fatima Al-Hassan",
-      classId: 6,
-      sectionId: "A",
-    },
-  ],
+export type OnlineClassDto = {
+  id: string;
+  title: string;
+  subject: string;
+  teacher?: string;
+  day?: string;
+  time?: string;
+  duration?: string;
+  joinUrl?: string;
+  joinLink?: string;
+  scheduledAt?: string;
+  status: "live" | "scheduled" | "ended";
+  recordingUrl?: string;
+  participants?: number;
 };
 
-const mockGradebook: GradebookEntry[] = [
-  {
-    studentId: 101,
-    studentName: "Raj Kumar",
-    marks: [
-      { term: "Q1", score: 85 },
-      { term: "Q2", score: 88 },
-    ],
-    grade: "A",
-  },
-  {
-    studentId: 102,
-    studentName: "Priya Singh",
-    marks: [
-      { term: "Q1", score: 72 },
-      { term: "Q2", score: 76 },
-    ],
-    grade: "B+",
-  },
-  {
-    studentId: 103,
-    studentName: "Arjun Mehta",
-    marks: [
-      { term: "Q1", score: 91 },
-      { term: "Q2", score: 89 },
-    ],
-    grade: "A+",
-  },
-  {
-    studentId: 104,
-    studentName: "Fatima Al-Hassan",
-    marks: [
-      { term: "Q1", score: 65 },
-      { term: "Q2", score: 70 },
-    ],
-    grade: "B",
-  },
-];
+export type UpdateOnlineClassRequest = {
+  Title?: string;
+  SubjectId?: number;
+  ClassId?: number;
+  SectionId?: number;
+  ScheduledAt?: string;
+  Platform?: string;
+  TeacherId?: number;
+  Status?: string;
+};
 
-export function useTeachers(params: {
-  page?: number;
-  limit?: number;
-  search?: string;
-}) {
-  const { page = 1, limit = 20, search = "" } = params;
-  return useQuery<{ data: TeacherListItemDto[]; total: number }>({
-    queryKey: ["teachers", page, limit, search],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        const filtered = search
-          ? mockTeachers.filter(
-              (t) =>
-                t.fullName.toLowerCase().includes(search.toLowerCase()) ||
-                t.employeeCode.toLowerCase().includes(search.toLowerCase()),
-            )
-          : mockTeachers;
-        return { data: filtered, total: filtered.length };
-      }
-      const qs = new URLSearchParams();
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      if (search) qs.set("search", search);
-      const res = await api.get<{ data: TeacherListItemDto[]; total: number }>(
-        `/teachers?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load teachers");
-      return res.data;
-    },
-  });
-}
-
-export function useTeacherDetail(id: number) {
-  return useQuery<TeacherDetailDto>({
-    queryKey: ["teacher", id],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { ...mockTeacherDetail, teacherId: id };
-      }
-      const res = await api.get<TeacherDetailDto>(`/teachers/${id}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load teacher detail");
-      return res.data;
-    },
-    enabled: id > 0,
-  });
-}
-
-export function useCreateTeacher() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: CreateTeacherRequest) => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        return { teacherId: Date.now() };
-      }
-      const res = await api.post<{ teacherId: number }>("/teachers", body);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create teacher");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["teachers"] }),
-  });
-}
-
-export function useUpdateTeacher() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      id,
-      body,
-    }: { id: number; body: UpdateTeacherRequest }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        return { success: true, id };
-      }
-      const res = await api.put<{ success: boolean; id: number }>(
-        `/teachers/${id}`,
-        body,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update teacher");
-      return res.data;
-    },
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["teachers"] });
-      qc.invalidateQueries({ queryKey: ["teacher", vars.id] });
-    },
-  });
-}
-
-export function useTeacherGradebook(
-  teacherId: number,
-  params: { class?: number; subject?: number; term?: string },
-) {
-  const { class: cls, subject, term } = params;
-  return useQuery<{ data: GradebookEntry[] }>({
-    queryKey: ["teacher-gradebook", teacherId, cls, subject, term],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        return { data: mockGradebook };
-      }
-      const qs = new URLSearchParams();
-      if (cls !== undefined) qs.set("class", String(cls));
-      if (subject !== undefined) qs.set("subject", String(subject));
-      if (term) qs.set("term", term);
-      const res = await api.get<{ data: GradebookEntry[] }>(
-        `/teachers/${teacherId}/gradebook?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load gradebook");
-      return res.data;
-    },
-    enabled: teacherId > 0,
-  });
-}
-
-export function useCreateLessonPlan() {
-  return useMutation({
-    mutationFn: async ({
-      teacherId,
-      body,
-    }: { teacherId: number; body: CreateLessonPlanRequest }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        return { lessonPlanId: Date.now() };
-      }
-      const res = await api.post<{ lessonPlanId: number }>(
-        `/teachers/${teacherId}/lesson-plan`,
-        body,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create lesson plan");
-      return res.data;
-    },
-  });
-}
-
-// ─── Fees ─────────────────────────────────────────────────────────────────────
-
-export function useInvoices(params: {
-  studentId?: string;
+export type CreateOnlineClassRequest = {
+  title?: string;
+  Title?: string;
+  subject?: string;
+  classId?: number;
+  ClassId?: number;
+  teacherId?: number;
+  TeacherId?: number;
+  scheduledAt?: string;
+  ScheduledAt?: string;
+  joinUrl?: string;
   status?: string;
-  page?: number;
-  limit?: number;
-}) {
-  const { studentId = "", status = "", page = 1, limit = 20 } = params;
-  return useQuery<{ data: Invoice[]; total: number }>({
-    queryKey: ["invoices", studentId, status, page, limit],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        const filtered =
-          status && status !== "all"
-            ? mockInvoices.filter((inv) => inv.status === status)
-            : mockInvoices;
-        return { data: filtered, total: filtered.length };
-      }
-      const qs = new URLSearchParams();
-      if (studentId) qs.set("studentId", studentId);
-      if (status && status !== "all") qs.set("status", status);
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      const res = await api.get<{ data: Invoice[]; total: number }>(
-        `/fees/invoices?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load invoices");
-      return res.data;
-    },
-  });
-}
+  Status?: string;
+  Platform?: string;
+};
 
-export function usePayInvoice() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      id,
-      payload,
-    }: {
-      id: string;
-      payload: PaymentPayload;
-    }) => {
-      if (isDemoMode()) {
-        await withDelay(null, 700);
-        return {
-          receiptId: `RCP-${Date.now()}`,
-          paidAt: new Date().toISOString(),
-          status: "paid",
-        };
-      }
-      const res = await api.post<{
-        receiptId: string;
-        paidAt: string;
-        status: string;
-      }>(`/fees/invoices/${id}/pay`, {
-        amount: payload.amount,
-        paymentMethod: payload.method,
-        transactionId: payload.transactionId || undefined,
-      });
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Payment failed");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
-  });
-}
+export type ExamDto = {
+  id: string;
+  name: string;
+  subject?: string;
+  classId?: number;
+  sectionId?: string;
+  date?: string;
+  startDate?: string;
+  endDate?: string;
+  duration?: number;
+  maxMarks?: number;
+  term?: string;
+  status?: "Scheduled" | "Ongoing" | "Completed";
+};
 
-export function useConcessions() {
-  return useQuery<Concession[]>({
-    queryKey: ["fees", "concessions"],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return [
-          { id: "c1", name: "Academic Scholarship", percentage: 50 },
-          { id: "c2", name: "Sports Bursary", percentage: 30 },
-          { id: "c3", name: "Sibling Discount", percentage: 15 },
-          { id: "c4", name: "Hardship Grant", percentage: 40 },
-        ];
-      }
-      const res = await api.get<{ data: Concession[] }>("/fees/concessions");
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to load concessions");
-      // Handle both { data: [] } envelope and direct array
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object)) {
-        return (raw as { data: Concession[] }).data;
-      }
-      return (raw as Concession[]) ?? [];
-    },
-  });
-}
+export type CreateExamRequest = {
+  Name: string;
+  Term: string;
+  ClassId?: number;
+  StartDate?: string;
+  EndDate?: string;
+};
 
-// ─── Admin ────────────────────────────────────────────────────────────────────
+export type ReportCardDto = {
+  student: { id: string; name: string };
+  term: string;
+  grades: { subject: string; marks: number; grade: string }[];
+  totalMarks?: number;
+  percentage?: number;
+};
+
+export type GenerateReportCardRequest = {
+  StudentId: number;
+  Term: string;
+  Weightings?: Record<string, number>;
+};
+
+export type NotificationDto = {
+  id: string;
+  date?: string;
+  createdAt?: string;
+  title: string;
+  subject?: string;
+  channel?: string[];
+  recipients?: string;
+  recipientType?: string;
+  status: "delivered" | "failed" | "pending";
+  read?: boolean;
+  type?: "info" | "warning" | "success" | "error" | "payment" | "system";
+};
+
+export type StaffDto = {
+  id: string;
+  name: string;
+  department: string;
+  position?: string;
+  role?: string;
+  joinDate?: string;
+  salary?: number;
+  basicSalary?: number;
+  allowances?: number;
+  deductions?: number;
+  netSalary?: number;
+  payStatus?: "Paid" | "Pending" | "Processing";
+  status: "active" | "on_leave" | "inactive";
+};
 
 export type AdminUserListItem = {
   userId: number;
@@ -1410,561 +419,868 @@ export type AdminSettingsValues = {
   SchoolName?: string;
   TimeZone?: string;
   Currency?: string;
+  values?: AdminSettingsValues;
   [key: string]: unknown;
 };
 
-const MOCK_ADMIN_USERS: AdminUserListItem[] = [
-  {
-    userId: 1,
-    username: "Dr. Sarah Evans",
-    email: "admin@escola.com",
-    role: "Admin",
-    isActive: true,
-  },
-  {
-    userId: 2,
-    username: "Mr. David Okonkwo",
-    email: "principal@escola.com",
-    role: "Principal",
-    isActive: true,
-  },
-  {
-    userId: 3,
-    username: "Mrs. Grace Okafor",
-    email: "teacher@escola.com",
-    role: "Teacher",
-    isActive: true,
-  },
-  {
-    userId: 4,
-    username: "Mr. James Bello",
-    email: "accounts@escola.com",
-    role: "AccountOfficer",
-    isActive: true,
-  },
-  {
-    userId: 5,
-    username: "Ms. Amara Nwosu",
-    email: "admissions@escola.com",
-    role: "AdmissionOfficer",
-    isActive: true,
-  },
-  {
-    userId: 6,
-    username: "Mr. Tunde Abiola",
-    email: "tunde.abiola@escola.com",
-    role: "Teacher",
-    isActive: false,
-  },
-];
+export type Concession = {
+  id: string;
+  name: string;
+  percentage: number;
+};
 
-const MOCK_ADMIN_ROLES: RoleListItem[] = [
-  {
-    roleId: 1,
-    roleName: "Admin",
-    permissions: ["manage_users", "view_reports", "manage_settings"],
-  },
-  {
-    roleId: 2,
-    roleName: "Principal",
-    permissions: ["view_students", "manage_classes", "appoint_teachers"],
-  },
-  {
-    roleId: 3,
-    roleName: "Teacher",
-    permissions: ["view_students", "manage_gradebook", "manage_lesson_plans"],
-  },
-  {
-    roleId: 4,
-    roleName: "AccountOfficer",
-    permissions: ["manage_fees", "view_reports", "manage_payroll"],
-  },
-  {
-    roleId: 5,
-    roleName: "AdmissionOfficer",
-    permissions: ["manage_admissions", "view_students"],
-  },
-  {
-    roleId: 6,
-    roleName: "Clerk",
-    permissions: ["view_dashboard", "manage_admissions", "view_notifications"],
-  },
-];
+export type Invoice = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  amount: number;
+  dueDate: string;
+  paidDate?: string;
+  status: "paid" | "unpaid" | "overdue" | "partial" | "pending";
+  grade?: string;
+  description?: string;
+  [key: string]: unknown;
+};
 
-export function useAdminUsers(
-  params: { role?: string; page?: number; limit?: number } = {},
-) {
-  const { role = "", page = 1, limit = 20 } = params;
-  return useQuery<{ data: AdminUserListItem[]; total: number }>({
-    queryKey: ["admin", "users", role, page, limit],
+export type GradebookEntry = {
+  studentId: number;
+  studentName: string;
+  marks: { term: string; score: number }[];
+  grade: string;
+};
+
+export type Application = {
+  id: number;
+  applicationNo: string;
+  applicantName: string;
+  dateOfBirth?: string;
+  gender?: string;
+  appliedClassId?: number;
+  status: string;
+  remarks?: string;
+  createTs?: string;
+};
+
+/** Map a raw API object (any casing) to a normalized Application record. */
+function normalizeApplicationItem(raw: unknown): Application {
+  const r = raw as Record<string, unknown>;
+  return {
+    id:
+      (r.id as number | undefined) ??
+      (r.Id as number | undefined) ??
+      (r.admissionId as number | undefined) ??
+      (r.AdmissionId as number | undefined) ??
+      0,
+    applicationNo:
+      (r.applicationNo as string | undefined) ??
+      (r.ApplicationNo as string | undefined) ??
+      "",
+    applicantName:
+      (r.applicantName as string | undefined) ??
+      (r.ApplicantName as string | undefined) ??
+      (r.studentName as string | undefined) ??
+      (r.StudentName as string | undefined) ??
+      (r.fullName as string | undefined) ??
+      (r.FullName as string | undefined) ??
+      (() => {
+        const fn =
+          (r.firstName as string | undefined) ??
+          (r.FirstName as string | undefined) ??
+          "";
+        const ln =
+          (r.lastName as string | undefined) ??
+          (r.LastName as string | undefined) ??
+          "";
+        return fn ? `${fn}${ln ? ` ${ln}` : ""}`.trim() : "";
+      })(),
+    dateOfBirth:
+      (r.dateOfBirth as string | undefined) ??
+      (r.DateOfBirth as string | undefined),
+    gender:
+      (r.gender as string | undefined) ?? (r.Gender as string | undefined),
+    appliedClassId:
+      (r.appliedClassId as number | undefined) ??
+      (r.AppliedClassId as number | undefined) ??
+      (r.classId as number | undefined) ??
+      (r.ClassId as number | undefined),
+    status:
+      (r.status as string | undefined) ??
+      (r.Status as string | undefined) ??
+      "Pending",
+    remarks:
+      (r.remarks as string | undefined) ?? (r.Remarks as string | undefined),
+    createTs:
+      (r.createTs as string | undefined) ??
+      (r.createAt as string | undefined) ??
+      (r.createdAt as string | undefined) ??
+      (r.CreatedAt as string | undefined),
+  };
+}
+
+// ─── Auth & User ──────────────────────────────────────────────────────────────
+
+export function useCurrentUser() {
+  return useQuery({
+    queryKey: ["auth", "me"],
     queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        const filtered = role
-          ? MOCK_ADMIN_USERS.filter((u) => u.role === role)
-          : MOCK_ADMIN_USERS;
-        return { data: filtered, total: filtered.length };
-      }
-      const qs = new URLSearchParams();
-      if (role) qs.set("role", role);
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      const res = await api.get<{ data: AdminUserListItem[]; total: number }>(
-        `/admin/users?${qs}`,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load users");
+      const res = await api.get<Record<string, unknown>>("/auth/me");
+      if (!res.success) throw new Error(res.error ?? "Failed to load user");
       return res.data;
     },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
-export function useCreateUser() {
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+
+export function useDashboardStats() {
+  return useQuery<DashboardStats>({
+    queryKey: ["dashboard", "stats"],
+    queryFn: async () => {
+      try {
+        const res = await api.get<unknown>("/dashboard/stats");
+        if (res.success && res.data) {
+          const d = res.data as Record<string, unknown>;
+          const n = (key: string, fallbackKey?: string): number =>
+            (d[key] as number | undefined) ??
+            (fallbackKey
+              ? (d[fallbackKey] as number | undefined)
+              : undefined) ??
+            0;
+          return {
+            totalStudents: n("totalStudents", "TotalStudents"),
+            totalTeachers: n("totalTeachers", "TotalTeachers"),
+            totalClasses: n("totalClasses", "TotalClasses"),
+            totalSections: n("totalSections", "TotalSections"),
+            presentToday: n("presentToday", "PresentToday"),
+            absentToday: n("absentToday", "AbsentToday"),
+            totalFeeCollected: n("totalFeeCollected", "TotalFeeCollected"),
+            pendingFees: n("pendingFees", "PendingFees"),
+            totalAdmissions: n("totalAdmissions", "TotalAdmissions"),
+            pendingAdmissions: n("pendingAdmissions", "PendingAdmissions"),
+            upcomingExams: n("upcomingExams", "UpcomingExams"),
+            activeOnlineClasses: n(
+              "activeOnlineClasses",
+              "ActiveOnlineClasses",
+            ),
+            totalNotifications: n("totalNotifications", "TotalNotifications"),
+            unreadNotifications: n(
+              "unreadNotifications",
+              "UnreadNotifications",
+            ),
+            totalRevenue:
+              n("totalFeeCollected", "TotalFeeCollected") ||
+              n("totalRevenue", "TotalRevenue"),
+            attendanceRate:
+              n("attendanceRate", "AttendanceRate") ||
+              (n("presentToday", "PresentToday") +
+                n("absentToday", "AbsentToday") >
+              0
+                ? Math.round(
+                    (n("presentToday", "PresentToday") /
+                      (n("presentToday", "PresentToday") +
+                        n("absentToday", "AbsentToday"))) *
+                      1000,
+                  ) / 10
+                : 0),
+          };
+        }
+      } catch {
+        // fall through to fallback
+      }
+
+      const [studentsRes, teachersRes] = await Promise.allSettled([
+        api.get<unknown>("/students?page=1&limit=1"),
+        api.get<unknown>("/teachers?page=1&limit=1"),
+      ]);
+
+      const getCount = (
+        result: PromiseSettledResult<{ success: boolean; data: unknown }>,
+      ) => {
+        if (result.status !== "fulfilled" || !result.value.success) return 0;
+        const raw = result.value.data as unknown;
+        if (Array.isArray(raw)) return raw.length;
+        if (raw && typeof raw === "object") {
+          const r = raw as Record<string, unknown>;
+          return (
+            (r.total as number | undefined) ??
+            (r.Total as number | undefined) ??
+            (r.totalCount as number | undefined) ??
+            (r.TotalCount as number | undefined) ??
+            extractAnyArray(raw).length
+          );
+        }
+        return 0;
+      };
+
+      return {
+        totalStudents: getCount(studentsRes),
+        totalTeachers: getCount(teachersRes),
+        totalClasses: 0,
+        totalSections: 0,
+        presentToday: 0,
+        absentToday: 0,
+        totalFeeCollected: 0,
+        pendingFees: 0,
+        totalAdmissions: 0,
+        pendingAdmissions: 0,
+        upcomingExams: 0,
+        activeOnlineClasses: 0,
+        totalNotifications: 0,
+        unreadNotifications: 0,
+        totalRevenue: 0,
+        attendanceRate: 0,
+      };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+// ─── Academic Masters ─────────────────────────────────────────────────────────
+
+export function useAcademicYears() {
+  return useQuery<AcademicYearDto[]>({
+    queryKey: ["academic-years"],
+    queryFn: async () => {
+      const res = await api.get<unknown>("/academic-years");
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load academic years");
+      return normalizeArray<AcademicYearDto>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useClasses(academicYearId?: number | string) {
+  return useQuery<ClassDto[]>({
+    queryKey: ["classes", academicYearId],
+    queryFn: async () => {
+      if (!academicYearId) return [];
+      const res = await api.get<unknown>(
+        `/classes/academicYear/${academicYearId}`,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to load classes");
+      return normalizeArray<ClassDto>(unwrapSuccessEnvelope(res.data));
+    },
+    enabled: !!academicYearId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useSections(classId?: number | string) {
+  return useQuery<SectionDto[]>({
+    queryKey: ["sections", classId],
+    queryFn: async () => {
+      if (!classId) return [];
+      const res = await api.get<unknown>(`/sections/Class/${classId}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load sections");
+      return normalizeArray<SectionDto>(unwrapSuccessEnvelope(res.data));
+    },
+    enabled: !!classId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateAcademicYear() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      YearLabel: string;
+      StartDate: string;
+      EndDate: string;
+      IsCurrent: boolean;
+    }) => {
+      const res = await api.post<unknown>("/academic-years", payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to create academic year");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["academic-years"] }),
+  });
+}
+
+export function useCreateClass() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      ClassName: string;
+      GradeLevel?: number;
+      AcademicYearId: number;
+    }) => {
+      const res = await api.post<unknown>("/classes", payload);
+      if (!res.success) throw new Error(res.error ?? "Failed to create class");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["classes"] }),
+  });
+}
+
+export function useCreateSection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      ClassId: number;
+      SectionName: string;
+      Capacity?: number;
+    }) => {
+      const res = await api.post<unknown>("/sections", payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to create section");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sections"] }),
+  });
+}
+
+// ─── Students ────────────────────────────────────────────────────────────────
+
+export function useStudents(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  classId?: number | string;
+  section?: string;
+}) {
+  const { page = 1, limit = 20, search = "", classId, section } = params ?? {};
+  return useQuery<{ data: StudentListItemDto[]; total: number }>({
+    queryKey: ["students", page, limit, search, classId, section],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      qs.set("page", String(page));
+      qs.set("limit", String(limit));
+      if (search) qs.set("search", search);
+      if (classId) qs.set("classId", String(classId));
+      if (section) qs.set("section", section);
+      const res = await api.get<unknown>(`/students?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load students");
+      console.log(
+        "[useStudents] raw API response:",
+        JSON.stringify(res.data).substring(0, 500),
+      );
+      const payload = unwrapSuccessEnvelope(res.data);
+      const rawArr = extractAnyArray(payload);
+      const total =
+        extractTotal(payload, rawArr.length) ||
+        extractTotal(res.data, rawArr.length);
+      const data: StudentListItemDto[] = rawArr.map((item) => {
+        const r = item as Record<string, unknown>;
+        const studentId =
+          (r.studentId as number | undefined) ??
+          (r.StudentId as number | undefined) ??
+          (r.id as number | undefined) ??
+          (r.Id as number | undefined) ??
+          0;
+        const enrollmentNo =
+          (r.enrollmentNo as string | undefined) ??
+          (r.EnrollmentNo as string | undefined) ??
+          (r.enrollmentNumber as string | undefined) ??
+          (r.admissionNo as string | undefined) ??
+          "";
+        const fullName =
+          (r.fullName as string | undefined) ??
+          (r.FullName as string | undefined) ??
+          (r.name as string | undefined) ??
+          (r.Name as string | undefined) ??
+          (() => {
+            const fn =
+              (r.firstName as string | undefined) ??
+              (r.FirstName as string | undefined) ??
+              "";
+            const ln =
+              (r.lastName as string | undefined) ??
+              (r.LastName as string | undefined) ??
+              "";
+            return fn ? `${fn}${ln ? ` ${ln}` : ""}`.trim() : "";
+          })();
+        return {
+          studentId,
+          enrollmentNo,
+          fullName,
+          dateOfBirth:
+            (r.dateOfBirth as string | undefined) ??
+            (r.DateOfBirth as string | undefined),
+          gender:
+            (r.gender as string | undefined) ??
+            (r.Gender as string | undefined),
+          classId:
+            (r.classId as number | undefined) ??
+            (r.ClassId as number | undefined),
+          sectionId:
+            (r.sectionId as string | undefined) ??
+            (r.SectionId as string | undefined) ??
+            (r.section as string | undefined) ??
+            (r.Section as string | undefined),
+          status:
+            (r.status as string | undefined) ??
+            (r.Status as string | undefined) ??
+            (r.isActive === true || r.IsActive === true
+              ? "Active"
+              : r.isActive === false || r.IsActive === false
+                ? "Inactive"
+                : "Active"),
+          createdAt:
+            (r.createdAt as string | undefined) ??
+            (r.CreatedAt as string | undefined) ??
+            new Date().toISOString(),
+        };
+      });
+      return { data, total };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useStudentDetail(id: number) {
+  return useQuery<StudentDetailDto>({
+    queryKey: ["student", id],
+    queryFn: async () => {
+      const res = await api.get<StudentDetailDto>(`/students/${id}`);
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Student not found");
+      return res.data;
+    },
+    enabled: !!id,
+  });
+}
+
+export function useCreateStudent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (
-      payload: CreateUserRequest,
-    ): Promise<{ userId: number }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { userId: Date.now() };
-      }
-      const res = await api.post<{ userId: number }>("/admin/users", payload);
+      payload: CreateStudentRequest,
+    ): Promise<CreateStudentResponse> => {
+      const res = await api.post<CreateStudentResponse>("/students", payload);
       if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create user");
+        throw new Error(res.error ?? "Failed to create student");
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["students"] }),
   });
 }
 
-export function useUpdateUser() {
+export function useUpdateStudent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
       id,
       payload,
-    }: { id: number; payload: UpdateUserRequest }): Promise<{
-      success: boolean;
-    }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
-      }
-      const res = await api.put<{ success: boolean }>(
-        `/admin/users/${id}`,
-        payload,
-      );
+    }: { id: number; payload: UpdateStudentRequest }) => {
+      const res = await api.put<StudentDetailDto>(`/students/${id}`, payload);
       if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update user");
+        throw new Error(res.error ?? "Failed to update student");
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["students"] });
+      qc.invalidateQueries({ queryKey: ["student", vars.id] });
+    },
   });
 }
 
-export function useDeleteUser() {
+export function useDeleteStudent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
+    mutationFn: async (id: number) => {
+      const res = await api.delete<unknown>(`/students/${id}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to delete student");
+      return { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["students"] }),
+  });
+}
+
+// ─── Teachers ────────────────────────────────────────────────────────────────
+
+export function useTeachers(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}) {
+  const { page = 1, limit = 20, search = "" } = params ?? {};
+  return useQuery<{ data: TeacherListItemDto[]; total: number }>({
+    queryKey: ["teachers", page, limit, search],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      qs.set("page", String(page));
+      qs.set("limit", String(limit));
+      if (search) qs.set("search", search);
+      console.log(
+        "[Teachers] token present?",
+        !!localStorage.getItem("accessToken"),
+      );
+      let rawResponse: unknown;
+      try {
+        const res = await api.get<unknown>(`/teachers?${qs}`);
+        console.log(
+          "[Teachers] raw response:",
+          JSON.stringify(res).slice(0, 800),
+        );
+        if (!res.success)
+          throw new Error(res.error ?? "Failed to load teachers");
+        rawResponse = unwrapSuccessEnvelope(res.data);
+      } catch (err) {
+        console.error("[Teachers] fetch failed:", err);
+        throw err;
       }
-      const res = await api.delete<{ success: boolean }>(`/admin/users/${id}`);
+
+      // ── Robust array extraction ──────────────────────────────────────────
+      // Handles: plain array, {data:[]}, {Data:[]}, {items:[]}, {Items:[]},
+      // {value:[]}, {teachers:[]}, {Teachers:[]}, {$values:[]},
+      // as well as nested envelopes where authFetch already unwrapped one level.
+      function extractArr(raw: unknown): Record<string, unknown>[] {
+        if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+        if (raw && typeof raw === "object") {
+          const r = raw as Record<string, unknown>;
+          for (const key of [
+            "data",
+            "Data",
+            "items",
+            "Items",
+            "value",
+            "Value",
+            "teachers",
+            "Teachers",
+            "results",
+            "Results",
+            "list",
+            "List",
+            "records",
+            "Records",
+            "$values",
+          ]) {
+            if (Array.isArray(r[key]))
+              return r[key] as Record<string, unknown>[];
+          }
+          // Last resort: find the first array-valued property
+          const found = Object.values(r).find((v) => Array.isArray(v));
+          if (found) return found as Record<string, unknown>[];
+        }
+        return [];
+      }
+
+      const arr = extractArr(rawResponse);
+      const total = extractTotal(rawResponse, arr.length);
+
+      console.log(`[Teachers] resolved ${arr.length} teachers, total=${total}`);
+
+      const data: TeacherListItemDto[] = arr.map((r) => ({
+        teacherId:
+          (r.teacherId as number | undefined) ??
+          (r.TeacherId as number | undefined) ??
+          (r.id as number | undefined) ??
+          (r.Id as number | undefined) ??
+          0,
+        employeeCode:
+          (r.employeeCode as string | undefined) ??
+          (r.EmployeeCode as string | undefined) ??
+          "",
+        fullName:
+          (r.fullName as string | undefined) ??
+          (r.FullName as string | undefined) ??
+          (r.name as string | undefined) ??
+          (r.Name as string | undefined) ??
+          (() => {
+            const fn =
+              (r.firstName as string | undefined) ??
+              (r.FirstName as string | undefined) ??
+              "";
+            const ln =
+              (r.lastName as string | undefined) ??
+              (r.LastName as string | undefined) ??
+              "";
+            return fn ? `${fn}${ln ? ` ${ln}` : ""}`.trim() : "";
+          })(),
+        email:
+          (r.email as string | undefined) ?? (r.Email as string | undefined),
+        phone:
+          (r.phone as string | undefined) ?? (r.Phone as string | undefined),
+        qualification:
+          (r.qualification as string | undefined) ??
+          (r.Qualification as string | undefined),
+        joinDate:
+          (r.joinDate as string | undefined) ??
+          (r.JoinDate as string | undefined),
+        status:
+          (r.status as string | undefined) ??
+          (r.Status as string | undefined) ??
+          (r.isActive === true || r.IsActive === true ? "Active" : "Inactive"),
+        createdAt:
+          (r.createdAt as string | undefined) ??
+          (r.CreatedAt as string | undefined) ??
+          new Date().toISOString(),
+      }));
+      return { data, total };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useTeacherDetail(id: number) {
+  return useQuery<TeacherDetailDto>({
+    queryKey: ["teacher", id],
+    queryFn: async () => {
+      const res = await api.get<TeacherDetailDto>(`/teachers/${id}`);
       if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to delete user");
+        throw new Error(res.error ?? "Failed to load teacher");
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+    enabled: id > 0,
   });
 }
 
-export function useAdminRoles() {
-  return useQuery<RoleListItem[]>({
-    queryKey: ["admin", "roles"],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return MOCK_ADMIN_ROLES;
-      }
-      const res = await api.get<{ data: RoleListItem[] }>("/admin/roles");
+export function useCreateTeacher() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateTeacherRequest) => {
+      const res = await api.post<{ teacherId: number }>("/teachers", body);
       if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load roles");
-      const d = res.data;
-      if ("data" in d && Array.isArray((d as { data: RoleListItem[] }).data))
-        return (d as { data: RoleListItem[] }).data;
-      return d as unknown as RoleListItem[];
+        throw new Error(res.error ?? "Failed to create teacher");
+      return res.data;
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["teachers"] }),
   });
 }
 
-export function useUpdateRolePermissions() {
+export function useUpdateTeacher() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
       id,
-      permissionIds,
-    }: { id: number; permissionIds: number[] }): Promise<{
-      success: boolean;
-    }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
-      }
-      const res = await api.put<{ success: boolean }>(`/admin/roles/${id}`, {
-        permissionIds,
-      });
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update role permissions");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "roles"] }),
-  });
-}
-
-export function useAdminSettings() {
-  return useQuery<{ values: AdminSettingsValues }>({
-    queryKey: ["admin", "settings"],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return {
-          values: {
-            siteName: "Demo School",
-            maintenanceMode: false,
-            maxUploadSizeMB: 50,
-            TimeZone: "UTC",
-            Currency: "USD",
-          },
-        };
-      }
-      const res = await api.get<{ values: AdminSettingsValues }>(
-        "/admin/settings",
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to load settings");
-      return res.data;
-    },
-  });
-}
-
-export function useUpdateAdminSettings() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (
-      values: Record<string, string>,
-    ): Promise<{ success: boolean; values: Record<string, string> }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        return { success: true, values };
-      }
-      const res = await api.put<{
-        success: boolean;
-        values: Record<string, string>;
-      }>("/admin/settings", { values });
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update settings");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "settings"] }),
-  });
-}
-
-// ─── Schedule ─────────────────────────────────────────────────────────────────
-
-export function useSchedule(classId: number, sectionId = "A") {
-  return useQuery<TimetableEntry[]>({
-    queryKey: ["schedule", classId, sectionId],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        // Convert section letter to numeric seed for mock timetable generator
-        const sectionSeed = sectionId.charCodeAt(0) - 64;
-        return generateMockTimetable(classId, sectionSeed);
-      }
-      const qs = new URLSearchParams({
-        classId: String(classId),
-        sectionId: sectionId,
-      });
-      const res = await api.get<{ data: TimetableEntry[] }>(`/schedule?${qs}`);
-      if (!res.success) throw new Error(res.error ?? "Failed to load schedule");
-      // Handle both { data: [] } envelope and direct array
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object)) {
-        return (raw as { data: TimetableEntry[] }).data;
-      }
-      return (raw as TimetableEntry[]) ?? [];
-    },
-    enabled: !!classId,
-  });
-}
-
-export type ScheduleSlotUpdateVars = {
-  id: string;
-  payload: ScheduleSlotUpdate;
-  classId: number;
-  sectionId: string;
-};
-
-export function useUpdateScheduleSlot() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (vars: ScheduleSlotUpdateVars) => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { id: vars.id, ...vars.payload };
-      }
-      const res = await api.put<TimetableEntry>(
-        `/schedule/${vars.id}`,
-        vars.payload,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Update failed");
+      body,
+    }: { id: number; body: UpdateTeacherRequest }) => {
+      const res = await api.put<unknown>(`/teachers/${id}`, body);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update teacher");
       return res.data;
     },
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({
-        queryKey: ["schedule", vars.classId, vars.sectionId],
-      });
+      qc.invalidateQueries({ queryKey: ["teachers"] });
+      qc.invalidateQueries({ queryKey: ["teacher", vars.id] });
     },
   });
 }
 
-export function useScheduleClashes(classId: number, sectionId = "A") {
-  return useQuery<{ day: string; period: number; conflict: string }[]>({
-    queryKey: ["schedule", "clashes", classId, sectionId],
+export function useDeleteTeacher() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.delete<unknown>(`/teachers/${id}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to delete teacher");
+      return { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["teachers"] }),
+  });
+}
+
+// ─── Attendance ───────────────────────────────────────────────────────────────
+
+export function useAttendance(
+  classId: string | number,
+  sectionId: string,
+  date: string,
+) {
+  return useQuery<{ studentId: string; status: string }[]>({
+    queryKey: ["attendance", classId, sectionId, date],
     queryFn: async () => {
-      if (isDemoMode()) {
-        return [];
-      }
       const qs = new URLSearchParams({
         classId: String(classId),
-        sectionId: sectionId,
+        sectionId,
+        date,
       });
-      const res = await api.get<
-        { day: string; period: number; conflict: string }[]
-      >(`/schedule/clashes?${qs}`);
-      if (!res.success) return [];
-      return res.data ?? [];
+      const res = await api.get<unknown>(`/attendance?${qs}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load attendance");
+      return normalizeArray<{ studentId: string; status: string }>(res.data);
     },
-    enabled: !!classId,
+    enabled: !!classId && !!sectionId && !!date,
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSubmitAttendance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: AttendanceSavePayload) => {
+      const res = await api.post<unknown>("/attendance", payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to save attendance");
+      return res.data ?? { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["attendance"] }),
+  });
+}
+
+// ─── Fees ─────────────────────────────────────────────────────────────────────
+
+export function useFees(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}) {
+  const { page = 1, limit = 20, search = "" } = params ?? {};
+  return useQuery<{ data: Invoice[]; total: number }>({
+    queryKey: ["fees", page, limit, search],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      qs.set("page", String(page));
+      qs.set("limit", String(limit));
+      if (search) qs.set("search", search);
+      const res = await api.get<unknown>(`/fees?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load fees");
+      const feePayload = unwrapSuccessEnvelope(res.data);
+      const arr = normalizeArray<Invoice>(feePayload);
+      return {
+        data: arr,
+        total:
+          extractTotal(feePayload, arr.length) ||
+          extractTotal(res.data, arr.length),
+      };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useFeePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const res = await api.post<unknown>("/fees/payment", payload);
+      if (!res.success) throw new Error(res.error ?? "Payment failed");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fees"] }),
+  });
+}
+
+export function useFeeConcessions() {
+  return useQuery<Concession[]>({
+    queryKey: ["fees", "concessions"],
+    queryFn: async () => {
+      const res = await api.get<unknown>("/fees/concessions");
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load concessions");
+      return normalizeArray<Concession>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** @deprecated use useFeeConcessions() */
+export const useConcessions = useFeeConcessions;
+// ─── Schedule / Timetable ─────────────────────────────────────────────────────
+
+export function useTimetable(classId: string | number, sectionId: string) {
+  return useQuery<TimetableEntry[]>({
+    queryKey: ["timetable", classId, sectionId],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ classId: String(classId), sectionId });
+      const res = await api.get<unknown>(`/timetable?${qs}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load timetable");
+      return normalizeArray<TimetableEntry>(unwrapSuccessEnvelope(res.data));
+    },
+    enabled: !!classId && !!sectionId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateTimetable() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: { id: string | number; payload: Record<string, unknown> }) => {
+      const res = await api.put<unknown>(`/timetable/${id}`, payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update timetable");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["timetable"] }),
+  });
+}
+
+// ─── Online Classes ───────────────────────────────────────────────────────────
+
+export function useOnlineClasses(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 20 } = params ?? {};
+  return useQuery<OnlineClassDto[]>({
+    queryKey: ["online-classes", page, limit],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      const res = await api.get<unknown>(`/online-classes?${qs}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load online classes");
+      return normalizeArray<OnlineClassDto>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useCreateOnlineClass() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateOnlineClassRequest) => {
+      const res = await api.post<OnlineClassDto>("/online-classes", payload);
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Failed to create online class");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["online-classes"] }),
+  });
+}
+
+export function useUpdateOnlineClass() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: { id: string | number; data: UpdateOnlineClassRequest }) => {
+      const res = await api.put<OnlineClassDto>(`/online-classes/${id}`, data);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update online class");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["online-classes"] }),
   });
 }
 
 // ─── Exams ────────────────────────────────────────────────────────────────────
 
-export type ExamDto = {
-  id: string;
-  name: string;
-  subject: string;
-  classId: number;
-  sectionId?: string;
-  date: string;
-  duration: number;
-  maxMarks: number;
-  status: "Scheduled" | "Ongoing" | "Completed";
-};
-
-export type ExamResultDto = {
-  studentId: number;
-  studentName: string;
-  marks: number;
-  maxMarks: number;
-  grade: string;
-  status: "Pass" | "Fail";
-};
-
-export type CreateExamRequest = {
-  name: string;
-  subject: string;
-  classId: number;
-  sectionId?: string;
-  examDate?: string;
-  date?: string;
-  duration: number;
-  maxMarks: number;
-  term?: string;
-  totalMarks?: number;
-};
-
-const MOCK_EXAMS_DATA: ExamDto[] = [
-  {
-    id: "EX-001",
-    name: "Mid-Term Mathematics",
-    subject: "Mathematics",
-    classId: 10,
-    sectionId: "A",
-    date: "2026-04-20",
-    duration: 120,
-    maxMarks: 100,
-    status: "Scheduled",
-  },
-  {
-    id: "EX-002",
-    name: "Physics Unit Test 2",
-    subject: "Physics",
-    classId: 10,
-    sectionId: "A",
-    date: "2026-04-18",
-    duration: 90,
-    maxMarks: 50,
-    status: "Completed",
-  },
-  {
-    id: "EX-003",
-    name: "English Literature Exam",
-    subject: "English",
-    classId: 9,
-    sectionId: "A",
-    date: "2026-04-15",
-    duration: 180,
-    maxMarks: 100,
-    status: "Completed",
-  },
-  {
-    id: "EX-004",
-    name: "Chemistry Mid-Term",
-    subject: "Chemistry",
-    classId: 11,
-    date: "2026-04-25",
-    duration: 120,
-    maxMarks: 100,
-    status: "Scheduled",
-  },
-  {
-    id: "EX-005",
-    name: "Biology Practical",
-    subject: "Biology",
-    classId: 9,
-    date: "2026-04-22",
-    duration: 60,
-    maxMarks: 30,
-    status: "Ongoing",
-  },
-];
-
-const MOCK_EXAM_RESULTS: ExamResultDto[] = [
-  {
-    studentId: 101,
-    studentName: "Aiden Clarke",
-    marks: 88,
-    maxMarks: 100,
-    grade: "A",
-    status: "Pass",
-  },
-  {
-    studentId: 102,
-    studentName: "Blessing Nwosu",
-    marks: 72,
-    maxMarks: 100,
-    grade: "B+",
-    status: "Pass",
-  },
-  {
-    studentId: 103,
-    studentName: "Chidera Obi",
-    marks: 91,
-    maxMarks: 100,
-    grade: "A+",
-    status: "Pass",
-  },
-  {
-    studentId: 104,
-    studentName: "Diana Petrov",
-    marks: 65,
-    maxMarks: 100,
-    grade: "B",
-    status: "Pass",
-  },
-  {
-    studentId: 105,
-    studentName: "Elijah Santos",
-    marks: 45,
-    maxMarks: 100,
-    grade: "D",
-    status: "Fail",
-  },
-  {
-    studentId: 106,
-    studentName: "Fatima Al-Hassan",
-    marks: 79,
-    maxMarks: 100,
-    grade: "B+",
-    status: "Pass",
-  },
-];
-
-export function useExams(params: {
-  classId?: number;
-  term?: string;
-  status?: string;
+export function useExams(params?: {
   page?: number;
   limit?: number;
+  term?: string;
 }) {
-  const { classId, term, status, page = 1, limit = 50 } = params;
+  const { page = 1, limit = 50, term } = params ?? {};
   return useQuery<ExamDto[]>({
-    queryKey: ["exams", classId, term, status, page, limit],
+    queryKey: ["exams", page, limit, term],
     queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        let filtered = MOCK_EXAMS_DATA;
-        if (classId) filtered = filtered.filter((e) => e.classId === classId);
-        if (status && status !== "all")
-          filtered = filtered.filter((e) => e.status === status);
-        return filtered;
-      }
-      const qs = new URLSearchParams();
-      if (classId) qs.set("classId", String(classId));
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
       if (term) qs.set("term", term);
-      if (status && status !== "all") qs.set("status", status);
-      qs.set("page", String(page));
-      qs.set("limit", String(limit));
-      const res = await api.get<{ data: ExamDto[] } | ExamDto[]>(
-        `/exams?${qs}`,
-      );
+      const res = await api.get<unknown>(`/exams?${qs}`);
       if (!res.success) throw new Error(res.error ?? "Failed to load exams");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: ExamDto[] }).data;
-      return (raw as ExamDto[]) ?? [];
+      return normalizeArray<ExamDto>(unwrapSuccessEnvelope(res.data));
     },
-  });
-}
-
-export function useExamResults(examId: string | number | null) {
-  return useQuery<ExamResultDto[]>({
-    queryKey: ["exam-results", examId],
-    queryFn: async () => {
-      if (!examId) return [];
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return MOCK_EXAM_RESULTS;
-      }
-      const res = await api.get<{ data: ExamResultDto[] } | ExamResultDto[]>(
-        `/exams/${examId}/results`,
-      );
-      if (!res.success) throw new Error(res.error ?? "Failed to load results");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: ExamResultDto[] }).data;
-      return (raw as ExamResultDto[]) ?? [];
-    },
-    enabled: !!examId,
+    staleTime: 60 * 1000,
   });
 }
 
 export function useCreateExam() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: CreateExamRequest): Promise<{ id: string }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        return { id: `EX-${Date.now()}` };
-      }
-      const res = await api.post<{ id: string }>("/exams", payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create exam");
+    mutationFn: async (payload: CreateExamRequest) => {
+      const res = await api.post<unknown>("/exams", payload);
+      if (!res.success) throw new Error(res.error ?? "Failed to create exam");
       return res.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["exams"] }),
@@ -1977,16 +1293,9 @@ export function useUpdateExam() {
     mutationFn: async ({
       id,
       payload,
-    }: { id: string; payload: Partial<CreateExamRequest> }): Promise<{
-      success: boolean;
-    }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
-      }
-      const res = await api.put<{ success: boolean }>(`/exams/${id}`, payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to update exam");
+    }: { id: string | number; payload: Partial<CreateExamRequest> }) => {
+      const res = await api.put<unknown>(`/exams/${id}`, payload);
+      if (!res.success) throw new Error(res.error ?? "Failed to update exam");
       return res.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["exams"] }),
@@ -1996,15 +1305,10 @@ export function useUpdateExam() {
 export function useDeleteExam() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return { success: true };
-      }
-      const res = await api.delete<{ success: boolean }>(`/exams/${id}`);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to delete exam");
-      return res.data;
+    mutationFn: async (id: string | number) => {
+      const res = await api.delete<unknown>(`/exams/${id}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to delete exam");
+      return { success: true };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["exams"] }),
   });
@@ -2012,60 +1316,937 @@ export function useDeleteExam() {
 
 // ─── Report Cards ─────────────────────────────────────────────────────────────
 
-export type ReportCardDto = {
-  student: { id: string; name: string };
-  term: string;
-  grades: { subject: string; marks: number; grade: string }[];
-  totalMarks?: number;
-  percentage?: number;
-};
-
-export type GenerateReportCardRequest = {
-  studentId?: string | number;
-  class?: string;
-  term: string;
-};
-
-export function useReportCards(params: {
-  classId?: number;
-  sectionId?: string;
-  term?: string;
+export function useReportCards(params?: {
+  page?: number;
+  studentId?: number | string;
 }) {
-  const { classId, sectionId, term = "Term 1" } = params;
+  const { page = 1, studentId } = params ?? {};
   return useQuery<ReportCardDto[]>({
-    queryKey: ["report-cards", classId, sectionId, term],
+    queryKey: ["report-cards", page, studentId],
     queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 500);
-        return [];
-      }
-      const qs = new URLSearchParams();
-      if (classId) qs.set("classId", String(classId));
-      if (sectionId) qs.set("sectionId", String(sectionId));
-      if (term) qs.set("term", encodeURIComponent(term));
-      const res = await api.get<ReportCardDto[]>(`/report-cards?${qs}`);
+      const qs = new URLSearchParams({ page: String(page) });
+      if (studentId) qs.set("studentId", String(studentId));
+      const res = await api.get<unknown>(`/report-cards?${qs}`);
       if (!res.success)
         throw new Error(res.error ?? "Failed to load report cards");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: ReportCardDto[] }).data;
-      return (raw as ReportCardDto[]) ?? [];
+      return normalizeArray<ReportCardDto>(res.data);
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useGenerateReportCard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: GenerateReportCardRequest) => {
+      const res = await api.post<{
+        ReportCard?: ReportCardDto;
+        reportCard?: ReportCardDto;
+      }>("/report-cards/generate", payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to generate report card");
+      return res.data?.ReportCard ?? res.data?.reportCard ?? res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["report-cards"] }),
+  });
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+export function useNotifications(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 20 } = params ?? {};
+  return useQuery<NotificationDto[]>({
+    queryKey: ["notifications", page, limit],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      const res = await api.get<unknown>(`/notifications?${qs}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load notifications");
+      return normalizeArray<NotificationDto>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.put<unknown>(`/notifications/${id}/read`, {});
+      if (!res.success) throw new Error(res.error ?? "Failed to mark as read");
+      return { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+}
+
+export function useMarkAllRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await api.put<unknown>("/notifications/read-all", {});
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to mark all as read");
+      return { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+}
+
+// ─── HR & Payroll ─────────────────────────────────────────────────────────────
+
+export function useHRStaff(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 50 } = params ?? {};
+  return useQuery<StaffDto[]>({
+    queryKey: ["hr-staff", page, limit],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      const res = await api.get<unknown>(`/hr/staff?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load staff");
+      return normalizeArray<StaffDto>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useHRPayroll(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 50 } = params ?? {};
+  return useQuery<StaffDto[]>({
+    queryKey: ["hr-payroll", page, limit],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      const res = await api.get<unknown>(`/hr/payroll?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load payroll");
+      return normalizeArray<StaffDto>(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function usePayrollSlip(staffId: string | number) {
+  return useQuery({
+    queryKey: ["hr-payslip", staffId],
+    queryFn: async () => {
+      const res = await api.get<unknown>(`/hr/payroll/${staffId}/payslip`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load payslip");
+      return res.data;
+    },
+    enabled: !!staffId,
+  });
+}
+
+// ─── Admissions ───────────────────────────────────────────────────────────────
+
+export function useAdmissions(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}) {
+  const { page = 1, limit = 20, search = "" } = params ?? {};
+  return useQuery<{ data: Application[]; total: number }>({
+    queryKey: ["admissions", page, limit, search],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      if (search) qs.set("search", search);
+
+      const res = await api.get<unknown>(`/admissions?${qs}`);
+      const rawData = res.success ? res.data : null;
+
+      if (!rawData) {
+        // Fallback to /students if /admissions fails
+        const fallback = await api.get<unknown>(`/students?${qs}`);
+        if (!fallback.success)
+          throw new Error(fallback.error ?? "Failed to load admissions");
+        const unwrappedFb = unwrapSuccessEnvelope(fallback.data);
+        const arrFb = extractAnyArray(unwrappedFb);
+        return {
+          data: arrFb.map(normalizeApplicationItem),
+          total:
+            extractTotal(unwrappedFb, arrFb.length) ||
+            extractTotal(fallback.data, arrFb.length),
+        };
+      }
+
+      // Unwrap { success, data, total } envelope if present, then extract array
+      const unwrapped = unwrapSuccessEnvelope(rawData);
+      const arr = Array.isArray(unwrapped)
+        ? unwrapped
+        : extractAnyArray(unwrapped);
+
+      return {
+        data: arr.map(normalizeApplicationItem),
+        total:
+          extractTotal(unwrapped, arr.length) ||
+          extractTotal(rawData, arr.length) ||
+          arr.length,
+      };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useCreateAdmission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      ApplicationNo?: string;
+      ApplicantName: string;
+      DateOfBirth?: string;
+      Gender?: string;
+      AppliedClassId?: number;
+      Status: string;
+      Remarks?: string;
+      AdmissionParents?: Array<{
+        ParentType: string;
+        Name: string;
+        Email: string;
+        Phone: string;
+        Occupation: string;
+        Relationship: string;
+      }>;
+      AdmissionDocuments?: Array<{
+        DocumentType: string;
+        FileUrl: string;
+      }>;
+    }) => {
+      const res = await api.post<unknown>("/admissions", payload);
+      if (!res.success) {
+        throw new Error(res.error ?? "Failed to create admission");
+      }
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admissions"] });
+      qc.invalidateQueries({ queryKey: ["students"] });
+    },
+    onError: (error: Error) => {
+      console.error("[useCreateAdmission] API error:", error.message);
     },
   });
 }
 
+export function useUpdateAdmissionStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      status,
+    }: { id: string | number; status: string }) => {
+      const res = await api.put<unknown>(`/admissions/${id}/status`, {
+        status,
+      });
+      if (res.success) return res.data;
+      const fallback = await api.put<unknown>(`/students/${id}`, { status });
+      if (!fallback.success)
+        throw new Error(fallback.error ?? "Failed to update status");
+      return fallback.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admissions"] });
+      qc.invalidateQueries({ queryKey: ["students"] });
+    },
+  });
+}
+
+// ─── Admin ────────────────────────────────────────────────────────────────────
+
+export function useAdminUsers(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  role?: string;
+}) {
+  const { page = 1, limit = 20, search = "" } = params ?? {};
+  return useQuery<{ data: AdminUserListItem[]; total: number }>({
+    queryKey: ["admin", "users", page, limit, search],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      if (search) qs.set("search", search);
+      if ((params as { role?: string } | undefined)?.role)
+        qs.set("role", (params as { role?: string }).role!);
+      const res = await api.get<unknown>(`/admin/users?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load users");
+      const arr = normalizeArray<AdminUserListItem>(res.data);
+      return { data: arr, total: extractTotal(res.data, arr.length) };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useCreateAdminUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateUserRequest) => {
+      const res = await api.post<{ userId: number }>("/admin/users", payload);
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Failed to create user");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+  });
+}
+
+export function useAdminRoles() {
+  return useQuery<RoleListItem[]>({
+    queryKey: ["admin", "roles"],
+    queryFn: async () => {
+      const res = await api.get<unknown>("/admin/roles");
+      if (!res.success) throw new Error(res.error ?? "Failed to load roles");
+      return normalizeArray<RoleListItem>(res.data);
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateUserRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, role }: { id: number; role: string }) => {
+      const res = await api.put<unknown>(`/admin/roles/${id}`, { role });
+      if (!res.success) throw new Error(res.error ?? "Failed to update role");
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "roles"] });
+    },
+  });
+}
+
+export function useDeleteAdminUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.delete<unknown>(`/admin/users/${id}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to delete user");
+      return { success: true };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+  });
+}
+
+export function useAdminSettings() {
+  return useQuery<{ values: AdminSettingsValues }>({
+    queryKey: ["admin", "settings"],
+    queryFn: async () => {
+      const res = await api.get<unknown>("/admin/settings");
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Failed to load settings");
+      const d = res.data as Record<string, unknown>;
+      // Normalize: if response has a 'values' key return as-is, else wrap it
+      if (d.values && typeof d.values === "object") {
+        return { values: d.values as AdminSettingsValues };
+      }
+      return { values: d as AdminSettingsValues };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateAdminSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (values: Record<string, unknown>) => {
+      const res = await api.put<unknown>("/admin/settings", values);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update settings");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "settings"] }),
+  });
+}
+
+// ─── Platform Admin (TenantSettings) ─────────────────────────────────────────
+
+export type TenantDto = {
+  Id?: number;
+  id?: number;
+  TenantId?: number;
+  tenantId?: number;
+  SchoolId?: number;
+  schoolId?: number;
+  SchoolName?: string;
+  schoolName?: string;
+  AdminEmail?: string;
+  adminEmail?: string;
+  SubscriptionPlan?: string;
+  subscriptionPlan?: string;
+  IsActive?: boolean;
+  isActive?: boolean;
+  CreatedAt?: string;
+  createdAt?: string;
+  PrincipalName?: string;
+  principalName?: string;
+  SchoolUsername?: string;
+  schoolUsername?: string;
+  AdminPhone?: string;
+  adminPhone?: string;
+  PrincipalEmail?: string;
+  principalEmail?: string;
+};
+
+export type CreateTenantPayload = {
+  SchoolName: string;
+  SchoolAcronym?: string;
+  Address?: string;
+  Phone?: string;
+  Email: string;
+  Motto?: string;
+  Website?: string;
+  Logo?: string;
+  SubscriptionPlan?: string;
+  PrincipalName: string;
+  SchoolUsername: string;
+  PrincipalEmail: string;
+  PrincipalPassword: string;
+  RoleId?: number;
+};
+
+export type PaymentSummary = {
+  totalPayments: number;
+  totalAmount: number;
+  successfulPayments: number;
+  failedPayments: number;
+  pendingPayments: number;
+};
+
+export function usePlatformTenants(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 20 } = params ?? {};
+  return useQuery<{ data: TenantDto[]; total: number }>({
+    queryKey: ["platform", "tenants", page, limit],
+    queryFn: async () => {
+      const res = await api.get<unknown>(
+        `/TenantSettings/admin/tenants?page=${page}&limit=${limit}`,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to load tenants");
+      const unwrapped = unwrapSuccessEnvelope(res.data);
+      const arr = normalizeArray<TenantDto>(unwrapped);
+      return {
+        data: arr,
+        total:
+          extractTotal(unwrapped, arr.length) ||
+          extractTotal(res.data, arr.length),
+      };
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useCreateTenant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateTenantPayload) => {
+      const res = await api.post<TenantDto>(
+        "/TenantSettings/admin/tenants",
+        payload,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to create tenant");
+      return res.data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export function useUpdateTenant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: { id: number; payload: Record<string, unknown> }) => {
+      const res = await api.put<TenantDto>(
+        `/TenantSettings/admin/tenants/${id}`,
+        payload,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to update tenant");
+      return res.data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export function useToggleTenantActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, isActive }: { id: number; isActive: boolean }) => {
+      const res = await api.put<unknown>(
+        `/TenantSettings/admin/tenants/${id}`,
+        { IsActive: isActive },
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to toggle tenant status");
+      return res.data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export function usePaymentSummary() {
+  return useQuery<PaymentSummary>({
+    queryKey: ["platform", "payment-summary"],
+    queryFn: async () => {
+      const res = await api.get<PaymentSummary>(
+        "/TenantSettings/admin/payments-summary",
+      );
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Failed to load payment summary");
+      return res.data;
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSendReminders() {
+  return useMutation({
+    mutationFn: async ({
+      tenantIds,
+      message,
+    }: { tenantIds: number[]; message: string }) => {
+      const res = await api.post<{ success: boolean; sentCount: number }>(
+        "/TenantSettings/admin/reminders",
+        { tenantIds, message },
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to send reminders");
+      return res.data;
+    },
+  });
+}
+
+export function useReminderLog(params?: { page?: number; limit?: number }) {
+  const { page = 1, limit = 20 } = params ?? {};
+  return useQuery({
+    queryKey: ["platform", "reminders", page, limit],
+    queryFn: async () => {
+      const res = await api.get<unknown>(
+        `/TenantSettings/admin/reminders?page=${page}&limit=${limit}`,
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load reminder log");
+      return normalizeArray(unwrapSuccessEnvelope(res.data));
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useResetPrincipalPassword() {
+  return useMutation({
+    mutationFn: async ({
+      id,
+      newPassword,
+    }: { id: number; newPassword: string }) => {
+      const res = await api.post<{ success: boolean }>(
+        `/TenantSettings/admin/tenants/${id}/reset-password`,
+        { newPassword },
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to reset password");
+      return res.data;
+    },
+  });
+}
+
+export function useUpdateSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      plan,
+      expiryDate,
+      status,
+    }: {
+      id: number;
+      plan: string;
+      expiryDate: string;
+      status: string;
+    }) => {
+      const res = await api.put<unknown>(
+        `/TenantSettings/admin/tenants/${id}/subscription`,
+        { plan, expiryDate, status },
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to update subscription");
+      return res.data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export type CreateLessonPlanRequest = {
+  subjectId: number;
+  classId: number;
+  lessonDate: string;
+  objectives?: string;
+  content?: string;
+  resources?: string;
+};
+
+/** Compat type for platform admin pages that use camelCase field names */
+export type UpdateTenantPayload = {
+  isActive?: boolean;
+  IsActive?: boolean;
+  subscriptionPlan?: string;
+  SubscriptionPlan?: string;
+  domain?: string;
+  Domain?: string;
+  adminEmail?: string;
+  AdminEmail?: string;
+  schoolName?: string;
+  SchoolName?: string;
+  principalName?: string;
+  PrincipalName?: string;
+  schoolUsername?: string;
+  SchoolUsername?: string;
+  adminPhone?: string;
+  AdminPhone?: string;
+};
+
+// ─── Legacy aliases — kept so existing pages don't break ─────────────────────
+
+/** @deprecated use useStudents() — returns Student[] shape for AttendancePage compat */
+export function useStudentsForClass(cls: string, section = "") {
+  return useQuery<import("../lib/mockData").Student[]>({
+    queryKey: ["students-for-class", cls, section],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (cls) qs.set("classId", cls.replace(/[^0-9]/g, "") || cls);
+      if (section) qs.set("section", section);
+      const res = await api.get<unknown>(`/students?${qs}`);
+      if (!res.success) return [];
+      const arr = normalizeArray<Record<string, unknown>>(res.data);
+      return arr.map((r) => ({
+        id: String(
+          (r.studentId as string | number | undefined) ??
+            (r.StudentId as string | number | undefined) ??
+            (r.id as string | number | undefined) ??
+            "",
+        ),
+        name:
+          (r.fullName as string | undefined) ??
+          (r.FullName as string | undefined) ??
+          (r.name as string | undefined) ??
+          "",
+        grade:
+          (r.classId as string | undefined) ??
+          (r.ClassId as string | undefined) ??
+          cls,
+        class: cls,
+        rollNo: Number(
+          (r.rollNumber as string | number | undefined) ??
+            (r.RollNumber as string | number | undefined) ??
+            (r.rollNo as string | number | undefined) ??
+            0,
+        ),
+      }));
+    },
+    enabled: !!cls,
+  });
+}
+
+// Allow legacy { class: number } param shape used by StudentsPage
+export function useStudents_compat(params: {
+  class?: number;
+  classId?: number | string;
+  section?: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+}) {
+  return useStudents({
+    classId: params.classId ?? params.class,
+    section: params.section,
+    page: params.page,
+    limit: params.limit,
+    search: params.search,
+  });
+}
+
+/** @deprecated use useStudents() */
+export function useStudentsForIDCards(params?: {
+  classId?: number;
+  sectionId?: string;
+}) {
+  return useStudents({
+    classId: params?.classId,
+    section: params?.sectionId,
+    limit: 100,
+  });
+}
+
+/** @deprecated use useStudents() */
+export const useStudents_v2 = useStudents;
+
+/** @deprecated use useTimetable() */
+export function useSchedule(classId: number, sectionId = "A") {
+  return useTimetable(classId, sectionId);
+}
+
+/** @deprecated use useFees() */
+export function useInvoices(params: {
+  studentId?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}) {
+  return useQuery<{ data: Invoice[]; total: number }>({
+    queryKey: [
+      "invoices",
+      params.studentId,
+      params.status,
+      params.page,
+      params.limit,
+    ],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (params.studentId) qs.set("studentId", params.studentId);
+      if (params.status && params.status !== "all")
+        qs.set("status", params.status);
+      qs.set("page", String(params.page ?? 1));
+      qs.set("limit", String(params.limit ?? 20));
+      const res = await api.get<unknown>(`/fees/invoices?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load invoices");
+      const arr = normalizeArray<Invoice>(res.data);
+      return { data: arr, total: extractTotal(res.data, arr.length) };
+    },
+  });
+}
+
+/** @deprecated use useTeachers() */
+export function useTeacherGradebook(
+  teacherId: number,
+  params: { class?: number; subject?: number; term?: string },
+) {
+  return useQuery<{ data: GradebookEntry[] }>({
+    queryKey: [
+      "teacher-gradebook",
+      teacherId,
+      params.class,
+      params.subject,
+      params.term,
+    ],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (params.class !== undefined) qs.set("class", String(params.class));
+      if (params.subject !== undefined)
+        qs.set("subject", String(params.subject));
+      if (params.term) qs.set("term", params.term);
+      const res = await api.get<{ data: GradebookEntry[] }>(
+        `/teachers/${teacherId}/gradebook?${qs}`,
+      );
+      if (!res.success || !res.data)
+        throw new Error(res.error ?? "Failed to load gradebook");
+      return res.data;
+    },
+    enabled: teacherId > 0,
+  });
+}
+
+/** @deprecated use useHRStaff() */
+export function useHRStaff_v1() {
+  return useHRStaff();
+}
+
+/** @deprecated use useHRPayroll() */
+export function usePayroll(params?: { month?: number; year?: number }) {
+  return useQuery<StaffDto[]>({
+    queryKey: ["hr-payroll-legacy", params?.month, params?.year],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (params?.month) qs.set("month", String(params.month));
+      if (params?.year) qs.set("year", String(params.year));
+      const res = await api.get<unknown>(`/hr/payroll?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load payroll");
+      return normalizeArray<StaffDto>(unwrapSuccessEnvelope(res.data));
+    },
+  });
+}
+
+/** @deprecated use useNotifications().markAllRead */
+export const useMarkAllNotificationsRead = useMarkAllRead;
+
+/** @deprecated */
+export function useAttendanceRecords(date: string, cls: string, section = "") {
+  return useAttendance(cls, section, date);
+}
+
+/** @deprecated */
+export function useSaveAttendance() {
+  return useSubmitAttendance();
+}
+
+/** @deprecated */
+export function useAdmissions_legacy(params: {
+  status?: string;
+  page?: number;
+  limit?: number;
+}) {
+  return useAdmissions(params);
+}
+
+/** @deprecated */
+export function useExamResults(examId: string | number | null) {
+  return useQuery({
+    queryKey: ["exam-results", examId],
+    queryFn: async () => {
+      if (!examId) return [];
+      const res = await api.get<unknown>(`/exams/${examId}/results`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load results");
+      return normalizeArray(res.data);
+    },
+    enabled: !!examId,
+  });
+}
+
+/** @deprecated */
+export const useCreateUser = useCreateAdminUser;
+
+/** @deprecated */
+export function usePayInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: { amount: number; method: string; transactionId: string };
+    }) => {
+      const res = await api.post<unknown>(`/fees/invoices/${id}/pay`, {
+        amount: payload.amount,
+        paymentMethod: payload.method,
+        transactionId: payload.transactionId || undefined,
+      });
+      if (!res.success) throw new Error(res.error ?? "Payment failed");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fees"] }),
+  });
+}
+
+/** @deprecated */
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: { id: number; payload: UpdateUserRequest }) => {
+      const res = await api.put<unknown>(`/admin/users/${id}`, payload);
+      if (!res.success) throw new Error(res.error ?? "Failed to update user");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+  });
+}
+
+/** @deprecated */
+export const useDeleteUser = useDeleteAdminUser;
+
+/** @deprecated */
+export function useUpdateRolePermissions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      permissionIds,
+    }: { id: number; permissionIds: number[] }) => {
+      const res = await api.put<unknown>(`/admin/roles/${id}`, {
+        permissionIds,
+      });
+      if (!res.success) throw new Error(res.error ?? "Failed to update role");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "roles"] }),
+  });
+}
+
+/** @deprecated use useUpdateAdminSettings() */
+export const useUpdateAdminSettings_v1 = useUpdateAdminSettings;
+
+/** @deprecated */
+export function useScheduleClashes(classId: number, sectionId = "A") {
+  return useQuery<{ day: string; period: number; conflict: string }[]>({
+    queryKey: ["timetable", "clashes", classId, sectionId],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ classId: String(classId), sectionId });
+      const res = await api.get<unknown>(`/schedule/clashes?${qs}`);
+      if (!res.success) return [];
+      return normalizeArray(res.data);
+    },
+    enabled: !!classId,
+  });
+}
+
+/** @deprecated use useUpdateTimetable() */
+export function useUpdateScheduleSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      id: string | number;
+      payload: Record<string, unknown>;
+      classId?: number | string;
+      sectionId?: string;
+    }) => {
+      const res = await api.put<TimetableEntry>(
+        `/timetable/${vars.id}`,
+        vars.payload,
+      );
+      if (!res.success) throw new Error(res.error ?? "Failed to update slot");
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({
+        queryKey: ["timetable", vars.classId, vars.sectionId],
+      });
+    },
+  });
+}
+
+/** @deprecated use useHRPayroll() */
+export function useProcessPayroll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const res = await api.post<unknown>("/hr/payroll/process", payload);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to process payroll");
+      return res.data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["hr-payroll"] }),
+  });
+}
+
+/** @deprecated */
+export function usePayslip(staffId: string, _month: string) {
+  return usePayrollSlip(staffId);
+}
+
+/** @deprecated */
 export function useStudentReportCard(studentId: number | string, term: string) {
-  return useQuery<ReportCardDto | null>({
+  return useQuery<unknown>({
     queryKey: ["report-cards", "student", studentId, term],
     queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return null;
-      }
       const qs = new URLSearchParams({ term });
-      const res = await api.get<ReportCardDto>(
-        `/report-cards/${studentId}?${qs}`,
-      );
+      const res = await api.get<unknown>(`/report-cards/${studentId}?${qs}`);
       if (!res.success)
         throw new Error(res.error ?? "Failed to load report card");
       return res.data;
@@ -2074,484 +2255,167 @@ export function useStudentReportCard(studentId: number | string, term: string) {
   });
 }
 
-export function useGenerateReportCard() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (
-      payload: GenerateReportCardRequest,
-    ): Promise<{ url?: string }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 800);
-        return {};
-      }
-      const res = await api.post<{ url?: string }>(
-        "/report-cards/generate",
-        payload,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to generate report card");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["report-cards"] }),
-  });
-}
-
-// ─── ID Cards ─────────────────────────────────────────────────────────────────
-
-export function useStudentsForIDCards(params?: {
-  classId?: number;
-  sectionId?: string;
-}) {
-  const { classId, sectionId } = params ?? {};
-  return useQuery<StudentListItemDto[]>({
-    queryKey: ["id-card-students-v2", classId, sectionId],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        let filtered = MOCK_STUDENT_LIST;
-        if (classId) filtered = filtered.filter((s) => s.classId === classId);
-        if (sectionId)
-          filtered = filtered.filter((s) => s.sectionId === sectionId);
-        return filtered.slice(0, 100);
-      }
-      const qs = new URLSearchParams({ limit: "100" });
-      if (classId) qs.set("class", String(classId));
-      if (sectionId) qs.set("section", String(sectionId));
-      const res = await api.get<
-        { data: StudentListItemDto[] } | StudentListItemDto[]
-      >(`/students?${qs}`);
-      if (!res.success) throw new Error(res.error ?? "Failed to load students");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: StudentListItemDto[] }).data;
-      return (raw as StudentListItemDto[]) ?? [];
-    },
-  });
-}
-
-// ─── HR & Payroll ─────────────────────────────────────────────────────────────
-
-export type StaffDto = {
-  id: string;
-  name: string;
-  department: string;
-  position?: string;
-  role?: string;
-  joinDate?: string;
-  salary?: number;
-  basicSalary?: number;
-  allowances?: number;
-  deductions?: number;
-  netSalary?: number;
-  payStatus?: "Paid" | "Pending" | "Processing";
-  status: "active" | "on_leave" | "inactive";
-};
-
-export type PayrollProcessRequest = {
-  staffId: string;
-  month: number;
-  year: number;
-  amount?: number;
-  deductions?: number;
-};
-
-export type PayrollResult = {
-  baseSalary: number;
-  deductions: number;
-  bonuses: number;
-  netPay: number;
-};
-
-const MOCK_HR_STAFF: StaffDto[] = [
-  {
-    id: "st1",
-    name: "Dr. Samuel Adeyemi",
-    department: "Administration",
-    position: "Principal",
-    joinDate: "2015-09-01",
-    basicSalary: 250000,
-    allowances: 75000,
-    deductions: 32000,
-    netSalary: 293000,
-    payStatus: "Paid",
-    status: "active",
-  },
-  {
-    id: "st2",
-    name: "Mrs. Grace Okafor",
-    department: "Academics",
-    position: "Senior Teacher",
-    joinDate: "2018-01-15",
-    basicSalary: 180000,
-    allowances: 50000,
-    deductions: 24000,
-    netSalary: 206000,
-    payStatus: "Paid",
-    status: "active",
-  },
-  {
-    id: "st3",
-    name: "Mr. James Bello",
-    department: "Finance",
-    position: "Bursar",
-    joinDate: "2019-03-01",
-    basicSalary: 200000,
-    allowances: 60000,
-    deductions: 28000,
-    netSalary: 232000,
-    payStatus: "Pending",
-    status: "active",
-  },
-  {
-    id: "st4",
-    name: "Ms. Ngozi Eze",
-    department: "Academics",
-    position: "Teacher",
-    joinDate: "2021-09-01",
-    basicSalary: 150000,
-    allowances: 40000,
-    deductions: 20000,
-    netSalary: 170000,
-    payStatus: "Processing",
-    status: "on_leave",
-  },
-  {
-    id: "st5",
-    name: "Mr. Tunde Abiola",
-    department: "Academics",
-    position: "Teacher",
-    joinDate: "2020-01-10",
-    basicSalary: 155000,
-    allowances: 42000,
-    deductions: 21000,
-    netSalary: 176000,
-    payStatus: "Pending",
-    status: "active",
-  },
-  {
-    id: "st6",
-    name: "Mrs. Amaka Chukwu",
-    department: "Admin Support",
-    position: "Secretary",
-    joinDate: "2022-06-01",
-    basicSalary: 130000,
-    allowances: 35000,
-    deductions: 18000,
-    netSalary: 147000,
-    payStatus: "Paid",
-    status: "active",
-  },
-];
-
-export function useHRStaff() {
-  return useQuery<StaffDto[]>({
-    queryKey: ["hr-staff-v2"],
-    queryFn: async () => {
-      if (isDemoMode()) return withDelay(MOCK_HR_STAFF);
-      const res = await api.get<{ data: StaffDto[] } | StaffDto[]>(
-        "/hr/staff?limit=50",
-      );
-      if (!res.success) throw new Error(res.error ?? "Failed to load staff");
-      const d = res.data as unknown;
-      if (d && typeof d === "object" && "data" in (d as object))
-        return (d as { data: StaffDto[] }).data;
-      return (d as StaffDto[]) ?? [];
-    },
-  });
-}
-
-export function usePayroll(params?: { month?: number; year?: number }) {
-  const { month, year } = params ?? {};
-  return useQuery<StaffDto[]>({
-    queryKey: ["hr-payroll", month, year],
-    queryFn: async () => {
-      if (isDemoMode()) return withDelay(MOCK_HR_STAFF);
-      const qs = new URLSearchParams();
-      if (month) qs.set("month", String(month));
-      if (year) qs.set("year", String(year));
-      const res = await api.get<{ data: StaffDto[] } | StaffDto[]>(
-        `/hr/payroll?${qs}`,
-      );
-      if (!res.success) throw new Error(res.error ?? "Failed to load payroll");
-      const d = res.data as unknown;
-      if (d && typeof d === "object" && "data" in (d as object))
-        return (d as { data: StaffDto[] }).data;
-      return (d as StaffDto[]) ?? [];
-    },
-  });
-}
-
-export function useProcessPayroll() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (
-      payload: PayrollProcessRequest,
-    ): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 800);
-        return { success: true };
-      }
-      const res = await api.post<{ success: boolean }>(
-        "/hr/payroll/process",
-        payload,
-      );
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to process payroll");
-      return res.data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["hr-staff-v2"] }),
-  });
-}
-
-export function usePayslip(staffId: string, month: string) {
-  return useQuery({
-    queryKey: ["hr-payslip", staffId, month],
-    queryFn: async () => {
-      if (isDemoMode()) return null;
-      const qs = new URLSearchParams({ month });
-      const res = await api.get(`/hr/payroll/${staffId}/payslip?${qs}`);
-      if (!res.success) throw new Error(res.error ?? "Failed to load payslip");
-      return res.data;
-    },
-    enabled: !!staffId && !!month,
-  });
-}
-
-// ─── Notifications ────────────────────────────────────────────────────────────
-
-export type NotificationDto = {
-  id: string;
-  date?: string;
-  createdAt?: string;
-  title: string;
-  subject?: string;
-  channel: string[];
-  recipients?: string;
-  recipientType?: string;
-  status: "delivered" | "failed" | "pending";
-  read?: boolean;
-  type?: "info" | "warning" | "success" | "error" | "payment" | "system";
-};
-
-const MOCK_NOTIFICATIONS: NotificationDto[] = [
-  {
-    id: "n1",
-    date: "2026-04-20",
-    title: "End-of-Term Exam Schedule",
-    channel: ["SMS", "Email"],
-    recipients: "All Parents",
-    status: "delivered",
-    type: "info",
-  },
-  {
-    id: "n2",
-    date: "2026-04-18",
-    title: "Fee Payment Reminder — Q2 Due",
-    channel: ["Push", "Email"],
-    recipients: "Class 10A",
-    status: "delivered",
-    type: "payment",
-  },
-  {
-    id: "n3",
-    date: "2026-04-15",
-    title: "Sports Day Announcement",
-    channel: ["SMS"],
-    recipients: "All Parents",
-    status: "pending",
-    type: "info",
-  },
-  {
-    id: "n4",
-    date: "2026-04-12",
-    title: "Attendance Alert — 3 Consecutive Absences",
-    channel: ["SMS", "Push"],
-    recipients: "Individual",
-    status: "delivered",
-    type: "warning",
-    read: false,
-  },
-  {
-    id: "n5",
-    date: "2026-04-10",
-    title: "Parent-Teacher Meeting — Friday 3PM",
-    channel: ["Email"],
-    recipients: "Class 11B",
-    status: "failed",
-    type: "error",
-    read: false,
-  },
-  {
-    id: "n6",
-    date: "2026-04-08",
-    title: "Public Holiday — School Closed",
-    channel: ["SMS", "Email", "Push"],
-    recipients: "All Parents",
-    status: "delivered",
-    type: "system",
-  },
-];
-
-export function useNotifications(params?: { page?: number; limit?: number }) {
-  const { page = 1, limit = 20 } = params ?? {};
-  return useQuery<NotificationDto[]>({
-    queryKey: ["notifications-v2", page, limit],
-    queryFn: async () => {
-      if (isDemoMode()) return withDelay(MOCK_NOTIFICATIONS);
-      const qs = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-      });
-      const res = await api.get<NotificationDto[]>(`/notifications?${qs}`);
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to load notifications");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: NotificationDto[] }).data;
-      return (raw as NotificationDto[]) ?? [];
-    },
-  });
-}
-
-export function useMarkNotificationRead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 200);
-        return { success: true };
-      }
-      const res = await api.put<{ success: boolean }>(
-        `/notifications/${id}/read`,
-        {},
-      );
-      if (!res.success) throw new Error(res.error ?? "Failed to mark as read");
-      return res.data ?? { success: true };
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications-v2"] }),
-  });
-}
-
-export function useMarkAllNotificationsRead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (): Promise<{ success: boolean }> => {
-      if (isDemoMode()) {
-        await withDelay(null, 300);
-        return { success: true };
-      }
-      const res = await api.put<{ success: boolean }>(
-        "/notifications/read-all",
-        {},
-      );
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to mark all as read");
-      return res.data ?? { success: true };
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications-v2"] }),
-  });
-}
-
-// ─── Online Classes ───────────────────────────────────────────────────────────
-
-export type OnlineClassDto = {
-  id: string;
-  title: string;
-  subject: string;
-  teacher?: string;
-  day?: string;
-  time?: string;
-  duration?: string;
-  joinUrl?: string;
-  joinLink?: string;
-  scheduledAt?: string;
-  status: "live" | "scheduled" | "ended";
-  recordingUrl?: string;
-  participants?: number;
-};
-
-export type CreateOnlineClassRequest = {
-  title: string;
-  subject: string;
-  classId?: number;
-  teacherId?: number;
-  day?: string;
-  time?: string;
-  duration?: string;
-  scheduledAt?: string;
-  joinUrl?: string;
-  status?: string;
-};
-
-export type UpdateOnlineClassRequest = {
-  Title?: string;
-  SubjectId?: number;
-  ClassId?: number;
-  SectionId?: number;
-  ScheduledAt?: string; // ISO 8601
-  Platform?: string;
-  TeacherId?: number;
-  Status?: string; // "Scheduled" | "Live" | "Ended"
-};
-
-export function useOnlineClasses(params?: { classId?: number }) {
-  const { classId } = params ?? {};
-  return useQuery<OnlineClassDto[]>({
-    queryKey: ["online-classes-v2", classId],
-    queryFn: async () => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return [];
-      }
-      const qs = classId ? `?classId=${classId}` : "";
-      const res = await api.get<OnlineClassDto[]>(`/online-classes${qs}`);
-      if (!res.success) throw new Error(res.error ?? "Failed to load sessions");
-      const raw = res.data as unknown;
-      if (raw && typeof raw === "object" && "data" in (raw as object))
-        return (raw as { data: OnlineClassDto[] }).data;
-      return (raw as OnlineClassDto[]) ?? [];
-    },
-  });
-}
-
-export function useUpdateOnlineClass() {
+/** @deprecated */
+export function useVerifyAdmission() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({
       id,
-      data,
-    }: {
-      id: string;
-      data: UpdateOnlineClassRequest;
-    }): Promise<OnlineClassDto | null> => {
-      if (isDemoMode()) {
-        await withDelay(null, 400);
-        return null;
-      }
-      const res = await api.put<OnlineClassDto>(`/online-classes/${id}`, data);
-      if (!res.success)
-        throw new Error(res.error ?? "Failed to update session");
+      status,
+      remarks,
+    }: { id: string; status: string; remarks?: string }) => {
+      const res = await api.post<unknown>(`/admissions/${id}/verify`, {
+        status,
+        remarks,
+      });
+      if (!res.success) throw new Error(res.error ?? "Verify failed");
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["online-classes-v2"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admissions"] }),
   });
 }
 
-export function useCreateOnlineClass() {
+/** @deprecated */
+export function useSubmitApplication() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (
-      payload: CreateOnlineClassRequest,
-    ): Promise<OnlineClassDto | null> => {
-      if (isDemoMode()) {
-        await withDelay(null, 600);
-        return null;
-      }
-      const res = await api.post<OnlineClassDto>("/online-classes", payload);
-      if (!res.success || !res.data)
-        throw new Error(res.error ?? "Failed to create session");
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const res = await api.post<{
+        id: string;
+        enrollmentId: string;
+        status: string;
+      }>("/admissions", payload);
+      if (!res.success) throw new Error(res.error ?? "Submission failed");
+      return res.data ?? { id: "", enrollmentId: "", status: "pending" };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admissions"] }),
+  });
+}
+
+/** @deprecated */
+export function useUploadDocument() {
+  return useMutation({
+    mutationFn: async ({
+      id,
+      file,
+      type,
+    }: { id: string; file: File; type: string }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("type", type);
+      const token = localStorage.getItem("accessToken");
+      const res = await fetch(
+        `https://escola.doorstepgarage.in/api/admissions/${id}/documents`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        },
+      );
+      if (!res.ok) throw new Error("Upload failed");
+      const json = await res.json();
+      return json.data ?? json;
+    },
+  });
+}
+
+/** @deprecated */
+export function useAttendanceStats(classId: number, month: string) {
+  return useQuery({
+    queryKey: ["attendance", "stats", classId, month],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ classId: String(classId), month });
+      const res = await api.get<unknown>(`/attendance/stats?${qs}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load stats");
       return res.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["online-classes-v2"] }),
+    enabled: !!classId && !!month,
   });
+}
+
+/** @deprecated */
+export function useCreateLessonPlan() {
+  return useMutation<
+    { lessonPlanId: number },
+    Error,
+    { teacherId: number; body: Record<string, unknown> }
+  >({
+    mutationFn: async ({ teacherId, body }) => {
+      const res = await api.post<{ lessonPlanId: number }>(
+        `/teachers/${teacherId}/lesson-plan`,
+        body,
+      );
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to create lesson plan");
+      return (res.data ?? { lessonPlanId: 0 }) as { lessonPlanId: number };
+    },
+  });
+}
+
+/** @deprecated */
+/** @deprecated */
+export function useUpcomingEvents(limit = 5) {
+  return useQuery<
+    { id: string; title: string; date?: string; time?: string; type?: string }[]
+  >({
+    queryKey: ["events", "upcoming", limit],
+    queryFn: async () => {
+      const res = await api.get<unknown>(`/events/upcoming?limit=${limit}`);
+      if (!res.success) throw new Error(res.error ?? "Failed to load events");
+      return normalizeArray<{
+        id: string;
+        title: string;
+        date?: string;
+        time?: string;
+        type?: string;
+      }>(res.data);
+    },
+  });
+}
+
+/** @deprecated */
+export function useRecentFeeActivities(limit = 10) {
+  return useQuery<
+    {
+      id: string;
+      student?: string;
+      amount?: number;
+      date?: string;
+      status?: string;
+      type?: string;
+    }[]
+  >({
+    queryKey: ["fees", "recent", limit],
+    queryFn: async () => {
+      const res = await api.get<unknown>(`/fees/recent?limit=${limit}`);
+      if (!res.success)
+        throw new Error(res.error ?? "Failed to load fee activities");
+      return normalizeArray<{
+        id: string;
+        student?: string;
+        amount?: number;
+        date?: string;
+        status?: string;
+        type?: string;
+      }>(res.data);
+    },
+  });
+}
+
+/** @deprecated */
+export function useDashboardChart(period: "monthly" | "weekly" = "monthly") {
+  return useQuery<{ month: string; applications: number; enrolled?: number }[]>(
+    {
+      queryKey: ["dashboard", "chart", period],
+      queryFn: async () => {
+        const res = await api.get<unknown>(`/dashboard/chart?period=${period}`);
+        if (!res.success) throw new Error(res.error ?? "Failed to load chart");
+        return normalizeArray<{
+          month: string;
+          applications: number;
+          enrolled?: number;
+        }>(res.data);
+      },
+    },
+  );
 }

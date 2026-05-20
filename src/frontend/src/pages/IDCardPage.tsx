@@ -727,8 +727,8 @@ export default function IDCardPage() {
                 <IDCard
                   student={student}
                   template={template}
-                  schoolName={profile.schoolName}
-                  schoolLogo={profile.logo}
+                  schoolName={profile.schoolName ?? ""}
+                  schoolLogo={profile.logo ?? null}
                 />
               </motion.div>
             </AnimatePresence>

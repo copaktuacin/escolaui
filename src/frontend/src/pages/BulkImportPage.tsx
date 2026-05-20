@@ -10,7 +10,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useCreateStudent } from "@/hooks/useQueries";
-import { isDemoMode } from "@/lib/demoMode";
 import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
@@ -31,48 +30,34 @@ import { toast } from "sonner";
 
 type ParsedRow = {
   rowNum: number;
-  name: string;
-  rollNo: string;
-  classId: string;
-  sectionId: string;
-  dob: string;
-  gender: string;
-  parentName: string;
-  parentPhone: string;
-  parentEmail: string;
+  FirstName: string;
+  LastName: string;
+  DateOfBirth: string;
+  ClassId: string;
+  Section: string;
+  RollNumber: string;
   valid: boolean;
   errors: string[];
 };
 
 type ImportStatus = "pending" | "importing" | "success" | "failed";
 
-type ImportResult = ParsedRow & {
-  status: ImportStatus;
-  errorMsg?: string;
-};
+type ImportResult = ParsedRow & { status: ImportStatus; errorMsg?: string };
 
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
 
 const CSV_HEADERS = [
-  "name",
-  "rollNo",
-  "classId",
-  "sectionId",
-  "dob",
-  "gender",
-  "parentName",
-  "parentPhone",
-  "parentEmail",
+  "FirstName",
+  "LastName",
+  "DateOfBirth",
+  "ClassId",
+  "Section",
+  "RollNumber",
 ];
 
-const SAMPLE_ROWS = [
-  "Aiden Clarke,STU-001,10,1,2010-05-15,M,Charles Clarke,+234-801-234-5678,charles@email.com",
-  "Blessing Nwosu,STU-002,9,2,2011-08-22,F,Emmanuel Nwosu,+234-803-456-7890,e.nwosu@email.com",
-  "Chidera Obi,,8,1,2012-03-10,M,,,",
-];
-
+/** Download a blank template — header row only, no sample data rows */
 function downloadTemplate() {
-  const csv = [CSV_HEADERS.join(","), ...SAMPLE_ROWS].join("\n");
+  const csv = `${CSV_HEADERS.join(",")}\n`;
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -86,15 +71,12 @@ function downloadResults(results: ImportResult[]) {
   const header = [...CSV_HEADERS, "status", "error"].join(",");
   const rows = results.map((r) =>
     [
-      r.name,
-      r.rollNo,
-      r.classId,
-      r.sectionId,
-      r.dob,
-      r.gender,
-      r.parentName,
-      r.parentPhone,
-      r.parentEmail,
+      r.FirstName,
+      r.LastName,
+      r.DateOfBirth,
+      r.ClassId,
+      r.Section,
+      r.RollNumber,
       r.status,
       r.errorMsg ?? "",
     ]
@@ -118,47 +100,42 @@ function parseCSV(text: string): ParsedRow[] {
     .filter(Boolean);
   if (lines.length === 0) return [];
 
-  const startIndex = lines[0].toLowerCase().startsWith("name") ? 1 : 0;
+  // Skip header row if present
+  const startIndex = lines[0].toLowerCase().startsWith("firstname") ? 1 : 0;
   const dataLines = lines.slice(startIndex);
 
   return dataLines.map((line, i) => {
     const cols = line
       .split(",")
       .map((c) => c.trim().replace(/^"|"$/g, "").trim());
-
     const [
-      name = "",
-      rollNo = "",
-      classId = "",
-      sectionId = "",
-      dob = "",
-      gender = "",
-      parentName = "",
-      parentPhone = "",
-      parentEmail = "",
+      FirstName = "",
+      LastName = "",
+      DateOfBirth = "",
+      ClassId = "",
+      Section = "",
+      RollNumber = "",
     ] = cols;
 
     const errors: string[] = [];
-    if (!name.trim()) errors.push("Name is required");
-    if (!classId.trim()) errors.push("Class ID is required");
-    else if (Number.isNaN(Number(classId)))
-      errors.push("Class ID must be a number");
-    if (gender && !["M", "F"].includes(gender.toUpperCase()))
-      errors.push("Gender must be M or F");
-    if (dob && !/^\d{4}-\d{2}-\d{2}$/.test(dob))
-      errors.push("Date of birth must be YYYY-MM-DD");
+    if (!FirstName.trim()) errors.push("FirstName is required");
+    if (!LastName.trim()) errors.push("LastName is required");
+    if (!ClassId.trim()) errors.push("ClassId is required");
+    else if (Number.isNaN(Number(ClassId)))
+      errors.push("ClassId must be a number");
+    if (!Section.trim()) errors.push("Section is required");
+    const dobRe = /^\d{4}-\d{2}-\d{2}$/;
+    if (DateOfBirth && !dobRe.test(DateOfBirth))
+      errors.push("DateOfBirth must be YYYY-MM-DD");
 
     return {
       rowNum: startIndex + i + 1,
-      name: name.trim(),
-      rollNo: rollNo.trim(),
-      classId: classId.trim(),
-      sectionId: sectionId.trim(),
-      dob: dob.trim(),
-      gender: gender.toUpperCase().trim(),
-      parentName: parentName.trim(),
-      parentPhone: parentPhone.trim(),
-      parentEmail: parentEmail.trim(),
+      FirstName: FirstName.trim(),
+      LastName: LastName.trim(),
+      DateOfBirth: DateOfBirth.trim(),
+      ClassId: ClassId.trim(),
+      Section: Section.trim(),
+      RollNumber: RollNumber.trim(),
       valid: errors.length === 0,
       errors,
     };
@@ -172,13 +149,7 @@ function StatusIcon({ status }: { status: ImportStatus }) {
     return <XCircle className="w-4 h-4 text-destructive" />;
   if (status === "importing")
     return (
-      <div
-        className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
-        style={{
-          borderColor: "var(--color-primary)",
-          borderTopColor: "transparent",
-        }}
-      />
+      <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
     );
   return <Clock className="w-4 h-4 text-muted-foreground" />;
 }
@@ -251,40 +222,22 @@ export default function BulkImportPage() {
     let done = 0;
     for (let i = 0; i < results.length; i++) {
       if (!results[i].valid) continue;
-
       results[i].status = "importing";
       setImportResults([...results]);
-
       try {
-        if (isDemoMode()) {
-          await new Promise((r) => setTimeout(r, 1000));
-          if (Math.random() < 0.1) throw new Error("Simulated import error");
-        } else {
-          await createMutation.mutateAsync({
-            name: results[i].name,
-            rollNo: results[i].rollNo || undefined,
-            classId: Number(results[i].classId),
-            sectionId: results[i].sectionId || undefined,
-            dob: results[i].dob || undefined,
-            gender: results[i].gender || undefined,
-            parentInfo:
-              results[i].parentName ||
-              results[i].parentPhone ||
-              results[i].parentEmail
-                ? {
-                    name: results[i].parentName || undefined,
-                    phone: results[i].parentPhone || undefined,
-                    email: results[i].parentEmail || undefined,
-                  }
-                : undefined,
-          });
-        }
+        await createMutation.mutateAsync({
+          FirstName: results[i].FirstName,
+          LastName: results[i].LastName,
+          DateOfBirth: results[i].DateOfBirth,
+          ClassId: Number(results[i].ClassId),
+          Section: results[i].Section,
+          RollNumber: results[i].RollNumber,
+        });
         results[i].status = "success";
       } catch (err) {
         results[i].status = "failed";
         results[i].errorMsg = (err as Error).message;
       }
-
       done++;
       setImportProgress(Math.round((done / validRows.length) * 100));
       setImportResults([...results]);
@@ -314,7 +267,7 @@ export default function BulkImportPage() {
       transition={{ duration: 0.35 }}
       className="space-y-6 max-w-5xl"
     >
-      {/* Header */}
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -336,7 +289,7 @@ export default function BulkImportPage() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-2 hover-lift border-border/60"
+          className="gap-2"
           onClick={downloadTemplate}
           data-ocid="bulk_import.download_template.button"
         >
@@ -344,7 +297,7 @@ export default function BulkImportPage() {
         </Button>
       </div>
 
-      {/* Upload Zone */}
+      {/* ── Upload Zone ──────────────────────────────────────────────────────── */}
       {!parsedRows && (
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
@@ -352,14 +305,8 @@ export default function BulkImportPage() {
           className="bg-card rounded-2xl border border-border shadow-card p-6 space-y-5"
         >
           <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-card"
-              style={{ background: "var(--color-primary-light)" }}
-            >
-              <Upload
-                className="w-4 h-4"
-                style={{ color: "var(--color-primary)" }}
-              />
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Upload className="w-4 h-4 text-primary" />
             </div>
             <div>
               <h2 className="font-display font-semibold text-foreground">
@@ -371,7 +318,6 @@ export default function BulkImportPage() {
             </div>
           </div>
 
-          {/* Drop zone */}
           <button
             type="button"
             onDragEnter={() => setDragging(true)}
@@ -379,7 +325,7 @@ export default function BulkImportPage() {
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className={`w-full border-2 border-dashed rounded-2xl p-14 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 group ${
+            className={`w-full border-2 border-dashed rounded-2xl p-14 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
               dragging
                 ? "border-primary bg-primary/5 scale-[1.01]"
                 : "border-border hover:border-primary/60 hover:bg-primary/5"
@@ -389,16 +335,10 @@ export default function BulkImportPage() {
             <motion.div
               animate={{ y: dragging ? -4 : 0 }}
               transition={{ type: "spring", stiffness: 400 }}
-              className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5 shadow-card transition-all"
-              style={{
-                background: dragging
-                  ? "var(--color-primary-light)"
-                  : "oklch(var(--muted))",
-              }}
+              className="w-16 h-16 rounded-2xl bg-muted/60 flex items-center justify-center mb-5 shadow-card"
             >
               <FileText
-                className="w-8 h-8 transition-colors"
-                style={{ color: dragging ? "var(--color-primary)" : undefined }}
+                className={`w-8 h-8 ${dragging ? "text-primary" : "text-muted-foreground/50"}`}
               />
             </motion.div>
             <p className="font-display font-semibold text-lg text-foreground">
@@ -407,14 +347,7 @@ export default function BulkImportPage() {
             <p className="text-sm text-muted-foreground mt-1">
               Supported format: .csv with UTF-8 encoding
             </p>
-            <div
-              className="mt-4 px-4 py-1.5 rounded-full text-xs font-semibold border transition-all"
-              style={{
-                background: "var(--color-primary-light)",
-                color: "var(--color-primary)",
-                borderColor: "var(--color-primary)",
-              }}
-            >
+            <div className="mt-4 px-4 py-1.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
               Browse Files
             </div>
           </button>
@@ -428,32 +361,31 @@ export default function BulkImportPage() {
             data-ocid="bulk_import.file.input"
           />
 
-          {/* Template info */}
           <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
             <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4 text-primary flex-shrink-0" />
               Required CSV Format
             </p>
-            <code className="text-xs text-muted-foreground block font-mono overflow-x-auto whitespace-pre bg-muted/50 rounded-lg px-3 py-2">
+            <code className="text-xs text-muted-foreground block font-mono bg-muted/50 rounded-lg px-3 py-2">
               {CSV_HEADERS.join(",")}
             </code>
             <p className="text-xs text-muted-foreground">
-              Required: <strong>name</strong>, <strong>classId</strong>. All
-              others are optional.
+              Required: <strong>FirstName</strong>, <strong>LastName</strong>,{" "}
+              <strong>ClassId</strong>, <strong>Section</strong>. DateOfBirth
+              format: YYYY-MM-DD.
             </p>
           </div>
         </motion.div>
       )}
 
-      {/* Preview Table */}
+      {/* ── Preview Table ──────────────────────────────────────────────────────── */}
       {parsedRows && !importResults && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          {/* File info bar */}
-          <div className="glass rounded-xl border border-border shadow-card px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-card rounded-xl border border-border shadow-subtle px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 rounded-lg">
                 <FileText className="w-4 h-4 text-muted-foreground" />
@@ -494,14 +426,16 @@ export default function BulkImportPage() {
               </Button>
               <Button
                 size="sm"
-                className="gap-2 btn-press shadow-card"
-                style={{ background: "var(--color-primary)" }}
+                className="gap-2 shadow-card"
                 onClick={handleImport}
                 disabled={validCount === 0 || importing}
                 data-ocid="bulk_import.import_all.button"
               >
                 <Users className="w-4 h-4" />
-                Import {validCount > 0 ? `${validCount} Students` : ""}
+                Import{" "}
+                {validCount > 0
+                  ? `${validCount} Student${validCount === 1 ? "" : "s"}`
+                  : ""}
               </Button>
             </div>
           </div>
@@ -516,58 +450,62 @@ export default function BulkImportPage() {
               <Table data-ocid="bulk_import.preview.table">
                 <TableHeader>
                   <TableRow className="bg-muted/20">
-                    <TableHead className="w-10 font-semibold">#</TableHead>
-                    <TableHead className="font-semibold">Name</TableHead>
-                    <TableHead className="font-semibold">Class</TableHead>
-                    <TableHead className="font-semibold">Section</TableHead>
-                    <TableHead className="hidden sm:table-cell font-semibold">
-                      Gender
+                    <TableHead className="w-10">#</TableHead>
+                    <TableHead>First Name</TableHead>
+                    <TableHead>Last Name</TableHead>
+                    <TableHead>Class ID</TableHead>
+                    <TableHead>Section</TableHead>
+                    <TableHead className="hidden md:table-cell">DOB</TableHead>
+                    <TableHead className="hidden lg:table-cell">
+                      Roll No.
                     </TableHead>
-                    <TableHead className="hidden md:table-cell font-semibold">
-                      DOB
-                    </TableHead>
-                    <TableHead className="hidden lg:table-cell font-semibold">
-                      Parent
-                    </TableHead>
-                    <TableHead className="font-semibold">Status</TableHead>
+                    <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {parsedRows.map((row, i) => (
                     <TableRow
                       key={row.rowNum}
-                      className={`table-row-hover stagger-item ${!row.valid ? "bg-destructive/5 hover:bg-destructive/10" : ""}`}
+                      className={
+                        !row.valid
+                          ? "bg-destructive/5 hover:bg-destructive/8"
+                          : ""
+                      }
                       data-ocid={`bulk_import.preview.item.${i + 1}`}
                     >
                       <TableCell className="text-muted-foreground text-xs">
                         {row.rowNum}
                       </TableCell>
                       <TableCell className="font-medium">
-                        {row.name || (
+                        {row.FirstName || (
                           <span className="text-destructive italic text-xs">
                             (missing)
                           </span>
                         )}
                       </TableCell>
-                      <TableCell>{row.classId || "–"}</TableCell>
-                      <TableCell>{row.sectionId || "–"}</TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        {row.gender || "–"}
+                      <TableCell className="font-medium">
+                        {row.LastName || (
+                          <span className="text-destructive italic text-xs">
+                            (missing)
+                          </span>
+                        )}
                       </TableCell>
+                      <TableCell>{row.ClassId || "–"}</TableCell>
+                      <TableCell>{row.Section || "–"}</TableCell>
                       <TableCell className="hidden md:table-cell">
-                        {row.dob || "–"}
+                        {row.DateOfBirth || "–"}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                        {row.parentName || "–"}
+                        {row.RollNumber || "–"}
                       </TableCell>
                       <TableCell>
                         {row.valid ? (
-                          <span className="badge-premium bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 text-xs">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
                             Valid
                           </span>
                         ) : (
                           <div className="space-y-0.5">
-                            <span className="badge-premium bg-destructive/10 text-destructive border border-destructive/30 text-xs">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-destructive/10 text-destructive border border-destructive/30">
                               Invalid
                             </span>
                             {row.errors.map((e) => (
@@ -590,7 +528,7 @@ export default function BulkImportPage() {
         </motion.div>
       )}
 
-      {/* Import Progress & Results */}
+      {/* ── Import Progress & Results ──────────────────────────────────────────── */}
       {importResults && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -601,26 +539,14 @@ export default function BulkImportPage() {
             <div className="bg-card rounded-2xl border border-border shadow-card p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center"
-                    style={{ background: "var(--color-primary-light)" }}
-                  >
-                    <Upload
-                      className="w-4 h-4"
-                      style={{ color: "var(--color-primary)" }}
-                    />
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <Upload className="w-4 h-4 text-primary" />
                   </div>
                   <p className="font-display font-semibold text-foreground">
                     Importing students…
                   </p>
                 </div>
-                <span
-                  className="badge-premium"
-                  style={{
-                    background: "var(--color-primary-light)",
-                    color: "var(--color-primary)",
-                  }}
-                >
+                <span className="text-sm font-bold text-primary">
                   {importProgress}%
                 </span>
               </div>
@@ -636,18 +562,16 @@ export default function BulkImportPage() {
           )}
 
           {!importing && (
-            <div className="glass rounded-xl border border-border shadow-card px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="bg-card rounded-xl border border-border shadow-subtle px-4 py-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 {successCount > 0 && (
-                  <span className="badge-premium bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3 h-3" />
-                    {successCount} imported
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
+                    <CheckCircle2 className="w-3 h-3" /> {successCount} imported
                   </span>
                 )}
                 {failCount > 0 && (
-                  <span className="badge-premium bg-destructive/10 text-destructive border border-destructive/30 flex items-center gap-1.5">
-                    <XCircle className="w-3 h-3" />
-                    {failCount} failed
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-destructive/10 text-destructive border border-destructive/30">
+                    <XCircle className="w-3 h-3" /> {failCount} failed
                   </span>
                 )}
               </div>
@@ -655,7 +579,7 @@ export default function BulkImportPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-2 hover-lift"
+                  className="gap-2"
                   onClick={() => downloadResults(importResults)}
                   data-ocid="bulk_import.download_results.button"
                 >
@@ -688,33 +612,35 @@ export default function BulkImportPage() {
               <Table data-ocid="bulk_import.results.table">
                 <TableHeader>
                   <TableRow className="bg-muted/20">
-                    <TableHead className="w-10 font-semibold">#</TableHead>
-                    <TableHead className="font-semibold">Name</TableHead>
-                    <TableHead className="font-semibold">Class</TableHead>
-                    <TableHead className="hidden sm:table-cell font-semibold">
-                      Parent
+                    <TableHead className="w-10">#</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Class / Section</TableHead>
+                    <TableHead className="hidden sm:table-cell">
+                      Roll No.
                     </TableHead>
-                    <TableHead className="font-semibold">Status</TableHead>
-                    <TableHead className="font-semibold">Message</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Message</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {importResults.map((row, i) => (
                     <TableRow
                       key={row.rowNum}
-                      className="table-row-hover stagger-item"
                       data-ocid={`bulk_import.result.item.${i + 1}`}
                     >
                       <TableCell className="text-muted-foreground text-xs">
                         {row.rowNum}
                       </TableCell>
-                      <TableCell className="font-medium">{row.name}</TableCell>
+                      <TableCell className="font-medium">
+                        {`${row.FirstName} ${row.LastName}`.trim() ||
+                          "(missing)"}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {row.classId}
-                        {row.sectionId ? `-${row.sectionId}` : ""}
+                        {row.ClassId}
+                        {row.Section ? `-${row.Section}` : ""}
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
-                        {row.parentName || "–"}
+                        {row.RollNumber || "–"}
                       </TableCell>
                       <TableCell>
                         <StatusIcon status={row.status} />

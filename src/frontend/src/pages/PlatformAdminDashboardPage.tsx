@@ -2,98 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import {
   type PaymentSummary,
-  type ReminderLog,
   type Tenant,
   adminGetPaymentSummary,
   adminGetReminderLog,
   adminGetTenants,
+  resolveTenantId,
 } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_SUMMARY: PaymentSummary = {
-  totalPayments: 48,
-  totalAmount: 14700,
-  successfulPayments: 44,
-  failedPayments: 2,
-  pendingPayments: 2,
-};
-
-const MOCK_TENANTS: Tenant[] = [
-  {
-    id: 1,
-    schoolName: "Springfield Academy",
-    adminEmail: "admin@springfield.edu",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2024-09-01T00:00:00Z",
-    nextBillingDate: "2026-05-01T00:00:00Z",
-  },
-  {
-    id: 2,
-    schoolName: "Riverside Public School",
-    adminEmail: "admin@riverside.edu",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2024-11-15T00:00:00Z",
-    nextBillingDate: "2026-05-15T00:00:00Z",
-  },
-  {
-    id: 3,
-    schoolName: "Lakewood International",
-    adminEmail: "admin@lakewood.edu",
-    subscriptionPlan: "Basic",
-    isActive: false,
-    createdAt: "2025-01-10T00:00:00Z",
-    nextBillingDate: "2026-04-10T00:00:00Z",
-    outstandingAmount: 2400,
-  },
-  {
-    id: 4,
-    schoolName: "Greenhill Primary",
-    adminEmail: "admin@greenhill.edu",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2025-03-20T00:00:00Z",
-    nextBillingDate: "2026-06-20T00:00:00Z",
-  },
-  {
-    id: 5,
-    schoolName: "Westbrook High School",
-    adminEmail: "admin@westbrook.edu",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2025-04-01T00:00:00Z",
-    nextBillingDate: "2026-05-25T00:00:00Z",
-  },
-];
-
-const MOCK_REMINDERS: ReminderLog[] = [
-  {
-    id: 1,
-    sentAt: "2026-04-15T10:30:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Your subscription payment is overdue. Please settle the outstanding amount to avoid service interruption.",
-    recipients: [{ tenantId: 3, schoolName: "Lakewood International" }],
-    sentCount: 1,
-    status: "Delivered",
-  },
-  {
-    id: 2,
-    sentAt: "2026-04-10T09:00:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Reminder: Your subscription renewal is due in 15 days. Please ensure your payment details are up to date.",
-    recipients: [
-      { tenantId: 2, schoolName: "Riverside Public School" },
-      { tenantId: 5, schoolName: "Westbrook High School" },
-    ],
-    sentCount: 2,
-    status: "Delivered",
-  },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,7 +16,12 @@ function StatCard({
   value,
   color,
   isCurrency,
-}: { label: string; value: number; color: string; isCurrency?: boolean }) {
+}: {
+  label: string;
+  value: number;
+  color: string;
+  isCurrency?: boolean;
+}) {
   return (
     <div
       className="rounded-xl p-5 border"
@@ -125,15 +44,29 @@ function StatCard({
 function StatusDot({ active }: { active: boolean }) {
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${active ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/50" : "bg-gray-800 text-gray-500 border border-gray-700"}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+        active
+          ? "bg-emerald-900/40 text-emerald-400 border border-emerald-700/50"
+          : "bg-gray-800 text-gray-500 border border-gray-700"
+      }`}
     >
       <span
-        className={`w-1.5 h-1.5 rounded-full mr-1.5 ${active ? "bg-emerald-400" : "bg-gray-600"}`}
+        className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+          active ? "bg-emerald-400" : "bg-gray-600"
+        }`}
       />
       {active ? "Active" : "Inactive"}
     </span>
   );
 }
+
+type RecentReminder = {
+  id: number;
+  schoolNames: string;
+  sentAt: string;
+  status: string;
+  count: number;
+};
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -141,7 +74,7 @@ export default function PlatformAdminDashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<PaymentSummary | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [reminders, setReminders] = useState<ReminderLog[]>([]);
+  const [reminders, setReminders] = useState<RecentReminder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,45 +82,54 @@ export default function PlatformAdminDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 500));
-        setSummary(MOCK_SUMMARY);
-        setTenants(MOCK_TENANTS.slice(0, 5));
-        setReminders(MOCK_REMINDERS);
-      } else {
-        const [summaryRes, tenantsRes, remindersRes] = await Promise.all([
-          adminGetPaymentSummary(),
-          adminGetTenants(1, 5),
-          adminGetReminderLog(1, 5),
-        ]);
-        // Surface the most critical error (403 > others)
-        const criticalErr =
-          [summaryRes, tenantsRes, remindersRes].find(
-            (r) => !r.success && r.error?.startsWith("Access denied"),
-          )?.error ?? [tenantsRes].find((r) => !r.success)?.error; // only tenant errors block the dashboard
-        if (criticalErr) {
-          setError(criticalErr);
-        }
-        // Payment summary: graceful 404 — show zeroed cards
-        if (summaryRes.success && summaryRes.data) {
-          setSummary(summaryRes.data);
-        } else {
-          // 404 or unavailable — use zeroed placeholder so stat cards still show
-          const is404 =
-            summaryRes.error?.includes("Not Found") ||
-            summaryRes.error?.includes("404");
-          if (!is404) {
-            // Only surface non-404 errors (404 means feature not yet implemented — hide gracefully)
-            console.warn("[EscolaUI] Payment summary error:", summaryRes.error);
-          }
-        }
-        const td = tenantsRes.data as { data?: Tenant[] } | null;
-        setTenants(Array.isArray(td?.data) ? td.data : []);
-        // Reminder log: graceful 404
-        if (remindersRes.success) {
-          const rd = remindersRes.data as { data?: ReminderLog[] } | null;
-          setReminders(Array.isArray(rd?.data) ? rd.data : []);
-        }
+      const [summaryRes, tenantsRes, remindersRes] = await Promise.all([
+        adminGetPaymentSummary(),
+        adminGetTenants(1, 5),
+        adminGetReminderLog(1, 5),
+      ]);
+
+      // Tenant errors are critical — surface them
+      if (!tenantsRes.success && tenantsRes.error?.includes("Access denied")) {
+        setError(tenantsRes.error);
+      }
+
+      // Payment summary: 404 is graceful
+      if (summaryRes.success && summaryRes.data) {
+        setSummary(summaryRes.data as PaymentSummary);
+      }
+
+      // Tenants: handle both array and wrapped envelope
+      const rawTenants = Array.isArray(tenantsRes.data)
+        ? (tenantsRes.data as Tenant[])
+        : Array.isArray((tenantsRes.data as { data?: Tenant[] })?.data)
+          ? (tenantsRes.data as { data: Tenant[] }).data
+          : [];
+      setTenants(rawTenants);
+
+      // Reminder log: graceful 404
+      if (remindersRes.success && remindersRes.data) {
+        const rawLogs = Array.isArray(remindersRes.data)
+          ? (remindersRes.data as Record<string, unknown>[])
+          : Array.isArray((remindersRes.data as { data?: unknown[] })?.data)
+            ? (remindersRes.data as { data: Record<string, unknown>[] }).data
+            : [];
+        setReminders(
+          rawLogs.slice(0, 5).map((r) => ({
+            id: Number(r.id ?? r.Id ?? 0),
+            schoolNames:
+              [
+                ...(((r.recipients ?? r.Recipients) as {
+                  schoolName?: string;
+                }[]) ?? []),
+              ]
+                .map((x) => x.schoolName ?? "")
+                .filter(Boolean)
+                .join(", ") || "—",
+            sentAt: String(r.sentAt ?? r.SentAt ?? ""),
+            status: String(r.status ?? r.Status ?? "Sent"),
+            count: Number(r.sentCount ?? r.SentCount ?? 1),
+          })),
+        );
       }
     } catch {
       setError("Failed to load dashboard data. Please try again.");
@@ -217,11 +159,7 @@ export default function PlatformAdminDashboardPage() {
       value: summary?.successfulPayments ?? 0,
       color: "#34d399",
     },
-    {
-      label: "Failed",
-      value: summary?.failedPayments ?? 0,
-      color: "#f87171",
-    },
+    { label: "Failed", value: summary?.failedPayments ?? 0, color: "#f87171" },
     {
       label: "Pending",
       value: summary?.pendingPayments ?? 0,
@@ -238,8 +176,8 @@ export default function PlatformAdminDashboardPage() {
             Platform Administration
           </h1>
           <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
-            Welcome back, {user?.name?.split(" ")[0] ?? "Admin"} — monitor all
-            tenants and platform activity
+            Welcome back, {user?.username ?? "Admin"} — monitor all tenants and
+            platform activity
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -251,10 +189,7 @@ export default function PlatformAdminDashboardPage() {
               color: "#34d399",
             }}
           >
-            <span
-              className="w-1.5 h-1.5 rounded-full bg-emerald-400"
-              style={{ animation: "pulse 2s infinite" }}
-            />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             System Online
           </span>
           <button
@@ -274,7 +209,7 @@ export default function PlatformAdminDashboardPage() {
         </div>
       </div>
 
-      {/* Error state */}
+      {/* Error */}
       {error && (
         <div
           className="rounded-xl p-4 border"
@@ -284,35 +219,14 @@ export default function PlatformAdminDashboardPage() {
           }}
           data-ocid="platform_dashboard.error_state"
         >
-          <div className="flex items-start gap-3">
-            <span style={{ color: "#f87171", fontSize: "1.1rem" }}>⛔</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "#fca5a5" }}>
-                {error.startsWith("Access denied")
-                  ? "Access Denied — SuperAdmin Required"
-                  : "Failed to load dashboard data"}
-              </p>
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {error}
-              </p>
-              {error.startsWith("Access denied") && (
-                <p className="text-xs mt-2" style={{ color: "#94a3b8" }}>
-                  Your current session may not have SuperAdmin privileges. Log
-                  out and log in again with your SuperAdmin credentials.
-                </p>
-              )}
-            </div>
-            {!error.startsWith("Access denied") && (
-              <button
-                type="button"
-                onClick={fetchData}
-                className="ml-auto text-xs underline flex-shrink-0"
-                style={{ color: "#f87171" }}
-              >
-                Retry
-              </button>
-            )}
-          </div>
+          <p className="text-sm font-semibold" style={{ color: "#fca5a5" }}>
+            {error.includes("Access denied")
+              ? "Access Denied — SuperAdmin Required"
+              : "Failed to load dashboard"}
+          </p>
+          <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+            {error}
+          </p>
         </div>
       )}
 
@@ -378,7 +292,7 @@ export default function PlatformAdminDashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Tenants */}
+        {/* Recent Schools */}
         <div
           className="rounded-2xl border overflow-hidden"
           style={{ background: "#1a2234", borderColor: "#1e293b" }}
@@ -441,41 +355,64 @@ export default function PlatformAdminDashboardPage() {
                 </a>
               </div>
             ) : (
-              tenants.map((t, i) => (
-                <div
-                  key={t.id}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5"
-                  data-ocid={`platform_dashboard.tenant.item.${i + 1}`}
-                >
+              tenants.map((t, i) => {
+                const raw = t as unknown as Record<string, unknown>;
+                const principalName =
+                  (raw.PrincipalName as string) ??
+                  (raw.principalName as string) ??
+                  "—";
+                const username =
+                  (raw.SchoolUsername as string) ??
+                  (raw.schoolUsername as string) ??
+                  (raw.AdminUsername as string) ??
+                  "—";
+                const initials = t.schoolName
+                  .split(" ")
+                  .map((w) => w[0])
+                  .slice(0, 2)
+                  .join("");
+                return (
                   <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
-                    style={{
-                      background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
-                    }}
+                    key={resolveTenantId(t) ?? i}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors hover:bg-white/5"
+                    data-ocid={`platform_dashboard.tenant.item.${i + 1}`}
                   >
-                    {t.schoolName
-                      .split(" ")
-                      .map((w) => w[0])
-                      .slice(0, 2)
-                      .join("")}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p
-                      className="text-sm font-medium truncate"
-                      style={{ color: "#e2e8f0" }}
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
+                      style={{
+                        background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                      }}
                     >
-                      {t.schoolName}
-                    </p>
-                    <p
-                      className="text-xs truncate"
-                      style={{ color: "#475569" }}
-                    >
-                      {t.subscriptionPlan} · {t.adminEmail}
-                    </p>
+                      {initials}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className="text-sm font-medium truncate"
+                        style={{ color: "#e2e8f0" }}
+                      >
+                        {t.schoolName}
+                      </p>
+                      <div className="flex items-center gap-3 flex-wrap mt-0.5">
+                        <span
+                          className="text-[11px]"
+                          style={{ color: "#64748b" }}
+                        >
+                          <span style={{ color: "#94a3b8" }}>Principal:</span>{" "}
+                          {principalName}
+                        </span>
+                        <span
+                          className="text-[11px]"
+                          style={{ color: "#64748b" }}
+                        >
+                          <span style={{ color: "#94a3b8" }}>User:</span>{" "}
+                          {username}
+                        </span>
+                      </div>
+                    </div>
+                    <StatusDot active={t.isActive} />
                   </div>
-                  <StatusDot active={t.isActive} />
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -550,7 +487,7 @@ export default function PlatformAdminDashboardPage() {
                       className="text-sm font-medium truncate"
                       style={{ color: "#e2e8f0" }}
                     >
-                      {r.recipients.map((x) => x.schoolName).join(", ")}
+                      {r.schoolNames}
                     </p>
                     <span
                       className="text-[11px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0"
@@ -567,12 +504,14 @@ export default function PlatformAdminDashboardPage() {
                     className="text-xs mt-0.5 truncate"
                     style={{ color: "#475569" }}
                   >
-                    {new Date(r.sentAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}{" "}
-                    · {r.sentCount} recipient{r.sentCount !== 1 ? "s" : ""}
+                    {r.sentAt
+                      ? new Date(r.sentAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : ""}{" "}
+                    · {r.count} recipient{r.count !== 1 ? "s" : ""}
                   </p>
                 </div>
               ))
@@ -581,7 +520,7 @@ export default function PlatformAdminDashboardPage() {
         </div>
       </div>
 
-      {/* Pending payments alert */}
+      {/* Pending alert */}
       {!loading && (summary?.pendingPayments ?? 0) > 0 && (
         <div
           className="rounded-2xl p-4 flex items-center justify-between gap-4 border"

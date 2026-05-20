@@ -1,79 +1,64 @@
 import { useCallback, useEffect, useState } from "react";
-import { type Tenant, adminGetTenants, adminSendReminders } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_TENANTS: Tenant[] = [
-  {
-    id: 1,
-    schoolName: "Springfield Academy",
-    adminEmail: "admin@springfield.edu",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2024-09-01T00:00:00Z",
-  },
-  {
-    id: 2,
-    schoolName: "Riverside Public School",
-    adminEmail: "admin@riverside.edu",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2024-11-15T00:00:00Z",
-  },
-  {
-    id: 3,
-    schoolName: "Lakewood International",
-    adminEmail: "admin@lakewood.edu",
-    subscriptionPlan: "Basic",
-    isActive: false,
-    createdAt: "2025-01-10T00:00:00Z",
-    outstandingAmount: 2400,
-  },
-  {
-    id: 4,
-    schoolName: "Greenhill Primary",
-    adminEmail: "admin@greenhill.edu",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2025-03-20T00:00:00Z",
-  },
-  {
-    id: 5,
-    schoolName: "Westbrook High School",
-    adminEmail: "admin@westbrook.edu",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2025-04-01T00:00:00Z",
-    outstandingAmount: 1200,
-  },
-];
+import {
+  type Tenant,
+  adminGetTenants,
+  adminSendReminders,
+  resolveTenantId,
+} from "../lib/api";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminRemindersPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
-  const [filter, setFilter] = useState<"all" | "overdue">("all");
+  const [filter, setFilter] = useState<"all" | "inactive">("all");
+  const [notAvailable, setNotAvailable] = useState(false);
 
   const loadTenants = useCallback(async () => {
     setLoading(true);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 400));
-        setTenants(MOCK_TENANTS);
-      } else {
-        const res = await adminGetTenants(1, 100);
-        const d = res.data as { data?: Tenant[] } | null;
-        setTenants(Array.isArray(d?.data) ? d.data : []);
-      }
+      const res = await adminGetTenants(1, 200);
+      const rawList: unknown[] = Array.isArray(res.data)
+        ? (res.data as unknown[])
+        : Array.isArray((res.data as { data?: unknown[] })?.data)
+          ? (res.data as { data: unknown[] }).data
+          : [];
+      const normalized = rawList.map((raw) => {
+        const r = raw as Record<string, unknown>;
+        return {
+          ...r,
+          id: Number(resolveTenantId(r) ?? 0),
+          schoolName:
+            (r.SchoolName as string) ?? (r.schoolName as string) ?? "",
+          adminEmail:
+            (r.AdminEmail as string) ??
+            (r.Email as string) ??
+            (r.adminEmail as string) ??
+            "",
+          subscriptionPlan: ((r.SubscriptionPlan as string) ??
+            (r.subscriptionPlan as string) ??
+            "Basic") as "Basic" | "Standard" | "Premium",
+          isActive: Boolean(
+            (r.IsActive as unknown) ?? (r.isActive as unknown) ?? false,
+          ),
+          createdAt:
+            (r.CreatedAt as string) ??
+            (r.createdAt as string) ??
+            new Date().toISOString(),
+          outstandingAmount:
+            ((r.OutstandingAmount as number) ??
+              (r.outstandingAmount as number)) ||
+            undefined,
+        } as Tenant;
+      });
+      setTenants(normalized);
     } finally {
       setLoading(false);
     }
@@ -84,8 +69,8 @@ export default function PlatformAdminRemindersPage() {
   }, [loadTenants]);
 
   const visibleTenants =
-    filter === "overdue"
-      ? tenants.filter((t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive)
+    filter === "inactive"
+      ? tenants.filter((t) => !t.isActive || (t.outstandingAmount ?? 0) > 0)
       : tenants;
 
   const allChecked =
@@ -95,10 +80,14 @@ export default function PlatformAdminRemindersPage() {
 
   function toggleAll() {
     if (allChecked) setSelected(new Set());
-    else setSelected(new Set(visibleTenants.map((t) => t.id)));
+    else
+      setSelected(
+        new Set(visibleTenants.map((t) => String(resolveTenantId(t) ?? t.id))),
+      );
   }
 
-  function toggleTenant(id: number) {
+  function toggleTenant(t: Tenant) {
+    const id = String(resolveTenantId(t) ?? t.id);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -107,15 +96,19 @@ export default function PlatformAdminRemindersPage() {
     });
   }
 
-  function selectAllOverdue() {
-    const overdueIds = tenants
-      .filter((t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive)
-      .map((t) => t.id);
-    setSelected(new Set(overdueIds));
+  function isSelected(t: Tenant) {
+    return selected.has(String(resolveTenantId(t) ?? t.id));
   }
 
-  const overdueCount = tenants.filter(
-    (t) => (t.outstandingAmount ?? 0) > 0 || !t.isActive,
+  function selectAllInactive() {
+    const ids = tenants
+      .filter((t) => !t.isActive || (t.outstandingAmount ?? 0) > 0)
+      .map((t) => String(resolveTenantId(t) ?? t.id));
+    setSelected(new Set(ids));
+  }
+
+  const inactiveCount = tenants.filter(
+    (t) => !t.isActive || (t.outstandingAmount ?? 0) > 0,
   ).length;
 
   async function handleSend() {
@@ -125,39 +118,26 @@ export default function PlatformAdminRemindersPage() {
       "Dear School Admin,\n\nThis is a payment reminder from EscolaUI Platform. Please ensure your subscription payment is settled at the earliest to avoid service interruption.\n\nThank you,\nEscolaUI Platform Team";
     setSending(true);
     setResult(null);
+    setNotAvailable(false);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 1200));
-        setResult({
-          type: "success",
-          text: `Reminder sent to ${selected.size} school${selected.size !== 1 ? "s" : ""} successfully (demo mode)`,
-        });
-        setSelected(new Set());
-        setMessage("");
-      } else {
-        const res = await adminSendReminders(Array.from(selected), msg);
-        if (!res.success) {
-          // Graceful 404 handling — endpoint may not be implemented yet
-          const is404 =
-            res.error?.includes("Not Found") || res.error?.includes("404");
-          if (is404) {
-            setResult({
-              type: "error",
-              text: "Reminder feature not yet available on the server — contact your backend team",
-            });
-            return;
-          }
-          throw new Error(res.error ?? "Failed to send reminders");
+      const res = await adminSendReminders(Array.from(selected), msg);
+      if (!res.success) {
+        const is404 =
+          res.error?.includes("Not Found") || res.error?.includes("404");
+        if (is404) {
+          setNotAvailable(true);
+          return;
         }
-        const count =
-          (res.data as { sentCount?: number })?.sentCount ?? selected.size;
-        setResult({
-          type: "success",
-          text: `Reminders sent to ${count} school${count !== 1 ? "s" : ""} successfully`,
-        });
-        setSelected(new Set());
-        setMessage("");
+        throw new Error(res.error ?? "Failed to send reminders");
       }
+      const count =
+        (res.data as { sentCount?: number })?.sentCount ?? selected.size;
+      setResult({
+        type: "success",
+        text: `Reminders sent to ${count} school${count !== 1 ? "s" : ""} successfully`,
+      });
+      setSelected(new Set());
+      setMessage("");
     } catch (err) {
       setResult({
         type: "error",
@@ -181,10 +161,10 @@ export default function PlatformAdminRemindersPage() {
             Select schools and send in-app payment reminders
           </p>
         </div>
-        {overdueCount > 0 && (
+        {inactiveCount > 0 && (
           <button
             type="button"
-            onClick={selectAllOverdue}
+            onClick={selectAllInactive}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors"
             style={{
               background: "rgba(248,113,113,0.08)",
@@ -193,15 +173,44 @@ export default function PlatformAdminRemindersPage() {
             }}
             data-ocid="reminders.select_all_overdue.button"
           >
-            ⚠ Select All Overdue ({overdueCount})
+            ⚠ Select All Inactive / Overdue ({inactiveCount})
           </button>
         )}
       </div>
 
-      {/* Result feedback */}
+      {/* Not available */}
+      {notAvailable && (
+        <div
+          className="p-4 rounded-xl border text-sm font-medium"
+          style={{
+            background: "rgba(99,102,241,0.06)",
+            borderColor: "rgba(99,102,241,0.2)",
+            color: "#a5b4fc",
+          }}
+          data-ocid="reminders.not_available_state"
+        >
+          Reminder feature not yet available on the server — the{" "}
+          <code
+            style={{
+              background: "#1e293b",
+              padding: "1px 4px",
+              borderRadius: "3px",
+            }}
+          >
+            POST /api/TenantSettings/admin/reminders
+          </code>{" "}
+          endpoint has not been implemented yet.
+        </div>
+      )}
+
+      {/* Result */}
       {result && (
         <div
-          className={`p-4 rounded-xl border text-sm font-medium ${result.type === "success" ? "bg-emerald-900/20 border-emerald-700/40 text-emerald-400" : "bg-red-900/20 border-red-700/40 text-red-400"}`}
+          className={`p-4 rounded-xl border text-sm font-medium ${
+            result.type === "success"
+              ? "bg-emerald-900/20 border-emerald-700/40 text-emerald-400"
+              : "bg-red-900/20 border-red-700/40 text-red-400"
+          }`}
           data-ocid={`reminders.${result.type}_state`}
         >
           {result.text}
@@ -219,8 +228,8 @@ export default function PlatformAdminRemindersPage() {
                 value: "all" as const,
               },
               {
-                label: `Overdue / Inactive (${overdueCount})`,
-                value: "overdue" as const,
+                label: `Inactive / Overdue (${inactiveCount})`,
+                value: "inactive" as const,
               },
             ].map((f) => (
               <button
@@ -230,7 +239,11 @@ export default function PlatformAdminRemindersPage() {
                   setFilter(f.value);
                   setSelected(new Set());
                 }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f.value ? "text-white" : "border text-gray-500 hover:text-gray-300"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  filter === f.value
+                    ? "text-white"
+                    : "border text-gray-500 hover:text-gray-300"
+                }`}
                 style={
                   filter === f.value
                     ? { background: "#4f46e5" }
@@ -243,7 +256,7 @@ export default function PlatformAdminRemindersPage() {
             ))}
           </div>
 
-          {/* Selected count */}
+          {/* Selection count */}
           <div className="flex items-center justify-between">
             <span
               className="text-sm"
@@ -361,19 +374,19 @@ export default function PlatformAdminRemindersPage() {
             ) : (
               <div>
                 {visibleTenants.map((tenant, i) => {
-                  const isChecked = selected.has(tenant.id);
+                  const checked = isSelected(tenant);
                   return (
                     <button
-                      key={tenant.id}
+                      key={String(resolveTenantId(tenant) ?? tenant.id)}
                       type="button"
-                      onClick={() => toggleTenant(tenant.id)}
+                      onClick={() => toggleTenant(tenant)}
                       className="w-full flex items-center gap-3 px-4 py-3 border-b text-left transition-colors"
                       style={{
                         borderColor: "#1e293b",
-                        background: isChecked
+                        background: checked
                           ? "rgba(99,102,241,0.06)"
                           : "transparent",
-                        borderLeft: isChecked
+                        borderLeft: checked
                           ? "2px solid #6366f1"
                           : "2px solid transparent",
                       }}
@@ -382,12 +395,12 @@ export default function PlatformAdminRemindersPage() {
                       <div
                         className="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
                         style={{
-                          borderColor: isChecked ? "#6366f1" : "#334155",
-                          background: isChecked ? "#6366f1" : "transparent",
+                          borderColor: checked ? "#6366f1" : "#334155",
+                          background: checked ? "#6366f1" : "transparent",
                         }}
                         data-ocid={`reminders.tenant.checkbox.${i + 1}`}
                       >
-                        {isChecked && (
+                        {checked && (
                           <span
                             style={{
                               color: "#fff",
@@ -450,7 +463,6 @@ export default function PlatformAdminRemindersPage() {
 
         {/* Right: message + send */}
         <div className="space-y-4 lg:sticky lg:top-6">
-          {/* Message editor */}
           <div
             className="rounded-2xl border overflow-hidden"
             style={{ background: "#1a2234", borderColor: "#1e293b" }}
@@ -494,7 +506,7 @@ export default function PlatformAdminRemindersPage() {
             </div>
           </div>
 
-          {/* Message preview */}
+          {/* Preview */}
           <div
             className="rounded-2xl border overflow-hidden"
             style={{ background: "#0f172a", borderColor: "#1e293b" }}
@@ -528,25 +540,18 @@ export default function PlatformAdminRemindersPage() {
                   >
                     EscolaUI Platform
                   </span>
-                  <span
-                    className="text-[10px] ml-auto"
-                    style={{ color: "#374151" }}
-                  >
-                    just now
-                  </span>
                 </div>
                 <p
                   className="text-xs leading-relaxed whitespace-pre-wrap line-clamp-5"
                   style={{ color: "#94a3b8" }}
                 >
                   {message.trim() ||
-                    "Dear School Admin,\n\nThis is a payment reminder from EscolaUI Platform. Please ensure your subscription payment is settled at the earliest to avoid service interruption.\n\nThank you,\nEscolaUI Platform Team"}
+                    "Dear School Admin,\n\nThis is a payment reminder from EscolaUI Platform. Please ensure your subscription payment is settled at the earliest.\n\nThank you,\nEscolaUI Platform Team"}
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Send button */}
           <button
             type="button"
             onClick={handleSend}

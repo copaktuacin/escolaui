@@ -183,6 +183,23 @@ function IconChevronRight() {
     </svg>
   );
 }
+function IconUser() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="w-3.5 h-3.5 flex-shrink-0"
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 
@@ -233,12 +250,15 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   const location = useLocation();
   const demo = isDemoMode();
 
-  const initials =
-    user?.name
-      ?.split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2) ?? "PA";
+  // Always display login username — never name
+  const displayUsername = user?.username || user?.name || "Admin";
+
+  const initials = displayUsername
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div
@@ -261,14 +281,16 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
       <div className="px-4 py-4 flex-shrink-0 border-b border-white/10">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-white"
+            <img
+              src="/assets/escola-logo.png"
+              alt="Escola"
+              className="w-9 h-9 rounded-xl object-contain flex-shrink-0"
               style={{
-                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                padding: "2px",
               }}
-            >
-              <IconShield />
-            </div>
+            />
             <div>
               <p className="text-sm font-bold text-white tracking-tight">
                 EscolaUI
@@ -375,7 +397,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         </div>
       </nav>
 
-      {/* User footer */}
+      {/* User footer — always shows login username */}
       <div className="px-3 py-3 flex-shrink-0 border-t border-white/10">
         <div className="flex items-center gap-2.5">
           <div
@@ -385,8 +407,9 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
             {initials}
           </div>
           <div className="flex-1 min-w-0">
+            {/* username from login — never hardcoded */}
             <p className="text-xs font-semibold text-gray-200 truncate leading-none">
-              {user?.name}
+              {displayUsername}
             </p>
             <p
               className="text-[10px] truncate mt-0.5"
@@ -423,6 +446,16 @@ export default function PlatformAdminLayout({
   const userMenuRef = useRef<HTMLDivElement>(null);
   const demo = isDemoMode();
 
+  // Always display login username
+  const displayUsername = user?.username || user?.name || "Admin";
+
+  const initials = displayUsername
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   // Close user menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -443,13 +476,6 @@ export default function PlatformAdminLayout({
         ? location.pathname === "/platform-admin"
         : location.pathname.startsWith(item.path),
     )?.label ?? "Administration";
-
-  const initials =
-    user?.name
-      ?.split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2) ?? "PA";
 
   return (
     <div
@@ -547,6 +573,19 @@ export default function PlatformAdminLayout({
 
           <div className="flex-1" />
 
+          {/* Platform Admin title + username display */}
+          <div className="hidden sm:flex items-center gap-3">
+            <span className="text-xs font-medium" style={{ color: "#6b7280" }}>
+              Logged in as
+            </span>
+            <span
+              className="text-sm font-semibold"
+              style={{ color: "#e5e7eb" }}
+            >
+              {displayUsername}
+            </span>
+          </div>
+
           {/* SuperAdmin badge */}
           <span
             className="text-[10px] px-2.5 py-1 font-semibold uppercase tracking-wider rounded-md hidden sm:inline-flex items-center gap-1.5"
@@ -577,11 +616,12 @@ export default function PlatformAdminLayout({
               >
                 {initials}
               </div>
+              {/* Show username from login — never hardcoded */}
               <span
                 className="text-sm font-medium hidden md:block"
                 style={{ color: "#d1d5db" }}
               >
-                {user?.name?.split(" ").slice(0, 2).join(" ")}
+                {displayUsername}
               </span>
             </button>
 
@@ -602,11 +642,12 @@ export default function PlatformAdminLayout({
                   className="px-4 py-3 border-b"
                   style={{ borderColor: "rgba(255,255,255,0.08)" }}
                 >
+                  {/* username — never user.name */}
                   <p
                     className="text-xs font-semibold truncate"
                     style={{ color: "#e2e8f0" }}
                   >
-                    {user?.name}
+                    {displayUsername}
                   </p>
                   <p
                     className="text-[10px] mt-0.5 truncate"
@@ -627,20 +668,9 @@ export default function PlatformAdminLayout({
                     style={{ color: "#d1d5db" }}
                     data-ocid="platform-admin.topbar.profile.button"
                   >
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="w-3.5 h-3.5 flex-shrink-0"
-                      style={{ color: "#6366f1" }}
-                    >
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
+                    <span style={{ color: "#6366f1" }}>
+                      <IconUser />
+                    </span>
                     My Profile
                   </button>
                   <button

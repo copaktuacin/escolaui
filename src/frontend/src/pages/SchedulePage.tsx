@@ -7,17 +7,24 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  useAcademicYears,
+  useClasses,
+  useSections,
+  useTimetable,
+  useUpdateTimetable,
+} from "@/hooks/useQueries";
+import type {
+  AcademicYearDto,
+  ClassDto,
+  SectionDto,
+  TimetableEntry,
+} from "@/hooks/useQueries";
 import {
   BookOpen,
   Calculator,
+  ChevronDown,
   Dumbbell,
   Edit2,
   FlaskConical,
@@ -31,20 +38,13 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { useSchedule, useUpdateScheduleSlot } from "../hooks/useQueries";
-import type { TimetableEntry } from "../lib/mockData";
 
-const DAYS: TimetableEntry["day"][] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-const DAY_LABELS: Record<TimetableEntry["day"], string> = {
-  Mon: "Mon",
-  Tue: "Tue",
-  Wed: "Wed",
-  Thu: "Thu",
-  Fri: "Fri",
-};
-const DAY_FULL: Record<TimetableEntry["day"], string> = {
+// ─── Constants ────────────────────────────────────────────────────────────────
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
+type Day = (typeof DAYS)[number];
+const DAY_FULL: Record<Day, string> = {
   Mon: "Monday",
   Tue: "Tuesday",
   Wed: "Wednesday",
@@ -63,147 +63,133 @@ const PERIOD_TIMES: Record<number, string> = {
   8: "14:50–15:40",
 };
 
-const CLASS_OPTIONS = [6, 7, 8, 9, 10, 11];
-const SECTION_OPTIONS = [
-  { id: "A", label: "A" },
-  { id: "B", label: "B" },
-  { id: "C", label: "C" },
-  { id: "D", label: "D" },
-];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function getAYId(ay: AcademicYearDto): number {
+  return (ay.Id ?? ay.id ?? 0) as number;
+}
+function getAYLabel(ay: AcademicYearDto): string {
+  return ay.YearLabel ?? ay.yearLabel ?? String(getAYId(ay));
+}
+function getClassId(c: ClassDto): number {
+  return (c.Id ?? c.id ?? 0) as number;
+}
+function getClassName(c: ClassDto): string {
+  return c.ClassName ?? c.className ?? String(getClassId(c));
+}
+function getSectionName(s: SectionDto): string {
+  return s.SectionName ?? s.sectionName ?? "";
+}
 
-const subjectColors: Record<
+// ─── Subject color map ────────────────────────────────────────────────────────
+const SUBJECT_COLORS: Record<
   string,
-  { bg: string; text: string; border: string; pill: string; glow: string }
+  { bg: string; text: string; border: string; pill: string }
 > = {
   Mathematics: {
-    bg: "bg-blue-50 dark:bg-blue-950/40",
-    text: "text-blue-700 dark:text-blue-300",
-    border: "border-blue-200 dark:border-blue-700",
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
     pill: "bg-blue-500",
-    glow: "hover:shadow-blue-200/60 dark:hover:shadow-blue-900/60",
   },
   Math: {
-    bg: "bg-blue-50 dark:bg-blue-950/40",
-    text: "text-blue-700 dark:text-blue-300",
-    border: "border-blue-200 dark:border-blue-700",
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
     pill: "bg-blue-500",
-    glow: "hover:shadow-blue-200/60 dark:hover:shadow-blue-900/60",
   },
   English: {
-    bg: "bg-purple-50 dark:bg-purple-950/40",
-    text: "text-purple-700 dark:text-purple-300",
-    border: "border-purple-200 dark:border-purple-700",
+    bg: "bg-purple-50",
+    text: "text-purple-700",
+    border: "border-purple-200",
     pill: "bg-purple-500",
-    glow: "hover:shadow-purple-200/60 dark:hover:shadow-purple-900/60",
   },
   Physics: {
-    bg: "bg-orange-50 dark:bg-orange-950/40",
-    text: "text-orange-700 dark:text-orange-300",
-    border: "border-orange-200 dark:border-orange-700",
+    bg: "bg-orange-50",
+    text: "text-orange-700",
+    border: "border-orange-200",
     pill: "bg-orange-500",
-    glow: "hover:shadow-orange-200/60 dark:hover:shadow-orange-900/60",
   },
   Chemistry: {
-    bg: "bg-emerald-50 dark:bg-emerald-950/40",
-    text: "text-emerald-700 dark:text-emerald-300",
-    border: "border-emerald-200 dark:border-emerald-700",
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
     pill: "bg-emerald-500",
-    glow: "hover:shadow-emerald-200/60",
   },
   Biology: {
-    bg: "bg-green-50 dark:bg-green-950/40",
-    text: "text-green-700 dark:text-green-300",
-    border: "border-green-200 dark:border-green-700",
+    bg: "bg-green-50",
+    text: "text-green-700",
+    border: "border-green-200",
     pill: "bg-green-500",
-    glow: "hover:shadow-green-200/60",
   },
   History: {
-    bg: "bg-amber-50 dark:bg-amber-950/40",
-    text: "text-amber-700 dark:text-amber-300",
-    border: "border-amber-200 dark:border-amber-700",
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    border: "border-amber-200",
     pill: "bg-amber-500",
-    glow: "hover:shadow-amber-200/60",
   },
   Geography: {
-    bg: "bg-teal-50 dark:bg-teal-950/40",
-    text: "text-teal-700 dark:text-teal-300",
-    border: "border-teal-200 dark:border-teal-700",
+    bg: "bg-teal-50",
+    text: "text-teal-700",
+    border: "border-teal-200",
     pill: "bg-teal-500",
-    glow: "hover:shadow-teal-200/60",
   },
   Art: {
-    bg: "bg-pink-50 dark:bg-pink-950/40",
-    text: "text-pink-700 dark:text-pink-300",
-    border: "border-pink-200 dark:border-pink-700",
+    bg: "bg-pink-50",
+    text: "text-pink-700",
+    border: "border-pink-200",
     pill: "bg-pink-500",
-    glow: "hover:shadow-pink-200/60",
   },
   ICT: {
-    bg: "bg-cyan-50 dark:bg-cyan-950/40",
-    text: "text-cyan-700 dark:text-cyan-300",
-    border: "border-cyan-200 dark:border-cyan-700",
+    bg: "bg-cyan-50",
+    text: "text-cyan-700",
+    border: "border-cyan-200",
     pill: "bg-cyan-500",
-    glow: "hover:shadow-cyan-200/60",
   },
   Computer: {
-    bg: "bg-cyan-50 dark:bg-cyan-950/40",
-    text: "text-cyan-700 dark:text-cyan-300",
-    border: "border-cyan-200 dark:border-cyan-700",
+    bg: "bg-cyan-50",
+    text: "text-cyan-700",
+    border: "border-cyan-200",
     pill: "bg-cyan-500",
-    glow: "hover:shadow-cyan-200/60",
   },
   "Physical Education": {
-    bg: "bg-red-50 dark:bg-red-950/40",
-    text: "text-red-700 dark:text-red-300",
-    border: "border-red-200 dark:border-red-700",
+    bg: "bg-red-50",
+    text: "text-red-700",
+    border: "border-red-200",
     pill: "bg-red-500",
-    glow: "hover:shadow-red-200/60",
   },
   PE: {
-    bg: "bg-red-50 dark:bg-red-950/40",
-    text: "text-red-700 dark:text-red-300",
-    border: "border-red-200 dark:border-red-700",
+    bg: "bg-red-50",
+    text: "text-red-700",
+    border: "border-red-200",
     pill: "bg-red-500",
-    glow: "hover:shadow-red-200/60",
   },
   Hindi: {
-    bg: "bg-yellow-50 dark:bg-yellow-950/40",
-    text: "text-yellow-700 dark:text-yellow-300",
-    border: "border-yellow-200 dark:border-yellow-700",
+    bg: "bg-yellow-50",
+    text: "text-yellow-700",
+    border: "border-yellow-200",
     pill: "bg-yellow-500",
-    glow: "hover:shadow-yellow-200/60",
-  },
-  "Social Studies": {
-    bg: "bg-indigo-50 dark:bg-indigo-950/40",
-    text: "text-indigo-700 dark:text-indigo-300",
-    border: "border-indigo-200 dark:border-indigo-700",
-    pill: "bg-indigo-500",
-    glow: "hover:shadow-indigo-200/60",
-  },
-  Economics: {
-    bg: "bg-lime-50 dark:bg-lime-950/40",
-    text: "text-lime-700 dark:text-lime-300",
-    border: "border-lime-200 dark:border-lime-700",
-    pill: "bg-lime-500",
-    glow: "hover:shadow-lime-200/60",
-  },
-  Accounts: {
-    bg: "bg-violet-50 dark:bg-violet-950/40",
-    text: "text-violet-700 dark:text-violet-300",
-    border: "border-violet-200 dark:border-violet-700",
-    pill: "bg-violet-500",
-    glow: "hover:shadow-violet-200/60",
   },
   Science: {
-    bg: "bg-sky-50 dark:bg-sky-950/40",
-    text: "text-sky-700 dark:text-sky-300",
-    border: "border-sky-200 dark:border-sky-700",
+    bg: "bg-sky-50",
+    text: "text-sky-700",
+    border: "border-sky-200",
     pill: "bg-sky-500",
-    glow: "hover:shadow-sky-200/60",
+  },
+  Economics: {
+    bg: "bg-lime-50",
+    text: "text-lime-700",
+    border: "border-lime-200",
+    pill: "bg-lime-500",
   },
 };
+const DEFAULT_COLORS = {
+  bg: "bg-muted/30",
+  text: "text-foreground",
+  border: "border-border",
+  pill: "bg-muted-foreground",
+};
 
-const subjectIcons: Record<
+const SUBJECT_ICONS: Record<
   string,
   React.ComponentType<{ className?: string }>
 > = {
@@ -223,16 +209,9 @@ const subjectIcons: Record<
   PE: Dumbbell,
 };
 
-const DEFAULT_COLORS = {
-  bg: "bg-muted/30",
-  text: "text-foreground",
-  border: "border-border",
-  pill: "bg-muted-foreground",
-  glow: "",
-};
-
-type EditCell = {
-  day: TimetableEntry["day"];
+// ─── SubjectCell ──────────────────────────────────────────────────────────────
+type EditCellData = {
+  day: Day;
   period: number;
   subject: string;
   teacher: string;
@@ -248,17 +227,17 @@ function SubjectCell({
   entry: TimetableEntry | undefined;
   hasClash: boolean;
   editMode: boolean;
-  onEdit: (data: EditCell) => void;
+  onEdit: (data: EditCellData) => void;
 }) {
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const [localSubject, setLocalSubject] = useState(entry?.subject ?? "");
-  const [localTeacher, setLocalTeacher] = useState(entry?.teacher ?? "");
-  const [localRoom, setLocalRoom] = useState(entry?.room ?? "");
+  const [open, setOpen] = useState(false);
+  const [sub, setSub] = useState(entry?.subject ?? "");
+  const [tch, setTch] = useState(entry?.teacher ?? "");
+  const [room, setRoom] = useState(entry?.room ?? "");
 
   if (!entry) {
     return (
       <div
-        className={`h-full min-h-[88px] flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl m-1.5 transition-all duration-150 ${
+        className={`h-full min-h-[88px] flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl m-1.5 transition-all ${
           editMode
             ? "cursor-pointer hover:border-primary/40 hover:bg-primary/3 group"
             : ""
@@ -277,15 +256,15 @@ function SubjectCell({
     );
   }
 
-  const colors = subjectColors[entry.subject] ?? DEFAULT_COLORS;
-  const Icon = subjectIcons[entry.subject];
+  const colors = SUBJECT_COLORS[entry.subject] ?? DEFAULT_COLORS;
+  const Icon = SUBJECT_ICONS[entry.subject];
 
-  const cell = (
+  const cellBody = (
     <div
       className={`h-full min-h-[88px] rounded-xl border-2 ${colors.bg} ${colors.border} px-3 py-3 flex flex-col justify-between m-1.5 relative transition-all duration-200 ${
         editMode
-          ? `cursor-pointer hover:scale-[1.03] hover:shadow-floating ${colors.glow}`
-          : `hover:scale-[1.02] hover:shadow-elevated ${colors.glow}`
+          ? "cursor-pointer hover:scale-[1.03] hover:shadow-floating"
+          : "hover:scale-[1.02] hover:shadow-elevated"
       }`}
     >
       {hasClash && (
@@ -293,7 +272,6 @@ function SubjectCell({
           <TriangleAlert className="w-3.5 h-3.5 text-destructive drop-shadow-sm" />
         </div>
       )}
-      {/* Subject name + icon */}
       <div className="flex items-start gap-1.5">
         {Icon && (
           <Icon className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${colors.text}`} />
@@ -302,7 +280,6 @@ function SubjectCell({
           {entry.subject}
         </span>
       </div>
-      {/* Teacher + room */}
       <div className="mt-2">
         <p className="text-[10px] text-muted-foreground font-semibold leading-tight truncate">
           {entry.teacher}
@@ -319,22 +296,22 @@ function SubjectCell({
     </div>
   );
 
-  if (!editMode) return cell;
+  if (!editMode) return cellBody;
 
   return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           className="w-full h-full text-left p-0 border-0 bg-transparent cursor-pointer"
           onClick={() => {
-            setLocalSubject(entry.subject);
-            setLocalTeacher(entry.teacher);
-            setLocalRoom(entry.room);
-            setPopoverOpen(true);
+            setSub(entry.subject);
+            setTch(entry.teacher);
+            setRoom(entry.room);
+            setOpen(true);
           }}
         >
-          {cell}
+          {cellBody}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -353,8 +330,8 @@ function SubjectCell({
               Subject
             </Label>
             <Input
-              value={localSubject}
-              onChange={(e) => setLocalSubject(e.target.value)}
+              value={sub}
+              onChange={(e) => setSub(e.target.value)}
               className="mt-1.5 h-8 text-xs input-premium"
             />
           </div>
@@ -363,8 +340,8 @@ function SubjectCell({
               Teacher
             </Label>
             <Input
-              value={localTeacher}
-              onChange={(e) => setLocalTeacher(e.target.value)}
+              value={tch}
+              onChange={(e) => setTch(e.target.value)}
               className="mt-1.5 h-8 text-xs input-premium"
             />
           </div>
@@ -373,23 +350,24 @@ function SubjectCell({
               Room
             </Label>
             <Input
-              value={localRoom}
-              onChange={(e) => setLocalRoom(e.target.value)}
+              value={room}
+              onChange={(e) => setRoom(e.target.value)}
               className="mt-1.5 h-8 text-xs input-premium"
             />
           </div>
           <Button
+            type="button"
             size="sm"
             className="w-full btn-school-primary"
             onClick={() => {
               onEdit({
-                day: entry.day,
+                day: entry.day as Day,
                 period: entry.period,
-                subject: localSubject,
-                teacher: localTeacher,
-                room: localRoom,
+                subject: sub,
+                teacher: tch,
+                room,
               });
-              setPopoverOpen(false);
+              setOpen(false);
             }}
             data-ocid="schedule.edit.save_button"
           >
@@ -401,74 +379,64 @@ function SubjectCell({
   );
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function SchedulePage() {
-  const [selectedClassId, setSelectedClassId] = useState(10);
-  const [selectedSectionId, setSelectedSectionId] = useState("A");
-  const [localTimetable, setLocalTimetable] = useState<TimetableEntry[]>([]);
+  const { data: academicYears = [], isLoading: ayLoading } = useAcademicYears();
+  const ayRef = useRef<HTMLSelectElement>(null);
+  const classRef = useRef<HTMLSelectElement>(null);
+  const sectionRef = useRef<HTMLSelectElement>(null);
+
+  const [selectedAYId, setSelectedAYId] = useState<number>(0);
+  const [selectedClassId, setSelectedClassId] = useState<number>(0);
+  const [selectedSection, setSelectedSection] = useState<string>("");
   const [editMode, setEditMode] = useState(false);
   const [autoSolving, setAutoSolving] = useState(false);
+  const [localTimetable, setLocalTimetable] = useState<TimetableEntry[]>([]);
 
-  const updateSlotMutation = useUpdateScheduleSlot();
+  const { data: classes = [], isLoading: classesLoading } = useClasses(
+    selectedAYId > 0 ? selectedAYId : undefined,
+  );
+  const { data: sections = [], isLoading: sectionsLoading } = useSections(
+    selectedClassId > 0 ? selectedClassId : undefined,
+  );
 
   const {
-    data: fetchedTimetable,
-    isLoading: scheduleLoading,
+    data: timetable = [],
+    isLoading: ttLoading,
     isError,
-  } = useSchedule(selectedClassId, selectedSectionId);
+  } = useTimetable(selectedClassId, selectedSection);
 
-  useEffect(() => {
-    if (fetchedTimetable) setLocalTimetable(fetchedTimetable);
-  }, [fetchedTimetable]);
+  const updateMutation = useUpdateTimetable();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fires when class/section changes
-  useEffect(() => {
-    setLocalTimetable([]);
-    setEditMode(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId, selectedSectionId]);
-
-  useEffect(() => {
-    if (isError)
-      toast.error("Failed to load timetable", {
-        description: "Could not fetch schedule from the server.",
-      });
-  }, [isError]);
-
-  const timetable = localTimetable;
-  const timetableMap: Record<string, TimetableEntry> = {};
-  for (const entry of timetable) {
-    timetableMap[`${entry.day}-${entry.period}`] = entry;
+  // Sync fetched timetable into local state for optimistic edits
+  const prevTTRef = useRef<TimetableEntry[]>([]);
+  if (timetable !== prevTTRef.current) {
+    prevTTRef.current = timetable;
+    setLocalTimetable(timetable);
   }
 
+  const ttMap: Record<string, TimetableEntry> = {};
+  for (const e of localTimetable) {
+    ttMap[`${e.day}-${e.period}`] = e;
+  }
+
+  // Clash detection
+  const teacherPeriods: Record<string, string[]> = {};
+  for (const e of localTimetable) {
+    const key = `${e.teacher}-${e.period}`;
+    if (!teacherPeriods[key]) teacherPeriods[key] = [];
+    teacherPeriods[key].push(`${e.day}-${e.period}`);
+  }
   const clashKeys = new Set<string>();
-  const teacherPeriodMap: Record<string, string[]> = {};
-  for (const entry of timetable) {
-    const key = `${entry.teacher}-${entry.period}`;
-    if (!teacherPeriodMap[key]) teacherPeriodMap[key] = [];
-    teacherPeriodMap[key].push(`${entry.day}-${entry.period}`);
-  }
-  for (const keys of Object.values(teacherPeriodMap)) {
-    if (keys.length > 1) {
-      for (const k of keys) clashKeys.add(k);
-    }
+  for (const keys of Object.values(teacherPeriods)) {
+    if (keys.length > 1) for (const k of keys) clashKeys.add(k);
   }
 
-  const subjects = Array.from(new Set(timetable.map((e) => e.subject))).sort();
-  const sectionLabel =
-    SECTION_OPTIONS.find((s) => s.id === selectedSectionId)?.label ??
-    selectedSectionId;
-  const timetableTitle = `Class ${selectedClassId}${sectionLabel}`;
+  const subjects = Array.from(
+    new Set(localTimetable.map((e) => e.subject)),
+  ).sort();
 
-  async function handleAutoSolve() {
-    setAutoSolving(true);
-    await new Promise((r) => setTimeout(r, 2000));
-    setAutoSolving(false);
-    toast.success("Timetable generated successfully", {
-      description: "No clashes detected in the new schedule",
-    });
-  }
-
-  async function handleEditCell(data: EditCell) {
+  async function handleEdit(data: EditCellData) {
     setLocalTimetable((prev) =>
       prev.map((e) =>
         e.day === data.day && e.period === data.period
@@ -481,23 +449,37 @@ export default function SchedulePage() {
           : e,
       ),
     );
-    const slotId = `${selectedClassId}-${selectedSectionId}-${data.day}-${data.period}`;
+    const slotId = `${selectedClassId}-${selectedSection}-${data.day}-${data.period}`;
     try {
-      await updateSlotMutation.mutateAsync({
+      await updateMutation.mutateAsync({
         id: slotId,
         payload: {
           subject: data.subject,
           teacher: data.teacher,
           room: data.room,
+          classId: selectedClassId,
+          sectionId: selectedSection,
         },
-        classId: selectedClassId,
-        sectionId: selectedSectionId,
       });
       toast.success("Period updated");
     } catch {
       toast.error("Failed to save — reverting");
     }
   }
+
+  async function handleAutoSolve() {
+    setAutoSolving(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    setAutoSolving(false);
+    toast.success("Timetable generated — no clashes detected");
+  }
+
+  if (isError) toast.error("Failed to load timetable");
+
+  const selectedClass = classes.find((c) => getClassId(c) === selectedClassId);
+  const timetableTitle = selectedClassId
+    ? `${selectedClass ? getClassName(selectedClass) : `Class ${selectedClassId}`}${selectedSection ? ` — Section ${selectedSection}` : ""}`
+    : "Select a class";
 
   return (
     <motion.div
@@ -521,46 +503,87 @@ export default function SchedulePage() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Class selector */}
-            <Select
-              value={String(selectedClassId)}
-              onValueChange={(v) => setSelectedClassId(Number(v))}
-            >
-              <SelectTrigger
-                className="w-32 h-9 bg-background input-premium"
+            {/* Academic Year — uncontrolled */}
+            <div className="relative">
+              <select
+                ref={ayRef}
+                defaultValue=""
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setSelectedAYId(id);
+                  setSelectedClassId(0);
+                  setSelectedSection("");
+                }}
+                className="h-9 rounded-xl border border-input bg-background px-3 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 input-premium appearance-none w-36"
+                data-ocid="schedule.academic_year.select"
+              >
+                <option value="">{ayLoading ? "Loading…" : "Year"}</option>
+                {academicYears.map((ay) => (
+                  <option key={getAYId(ay)} value={String(getAYId(ay))}>
+                    {getAYLabel(ay)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+
+            {/* Class — uncontrolled */}
+            <div className="relative">
+              <select
+                ref={classRef}
+                defaultValue=""
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setSelectedClassId(id);
+                  setSelectedSection("");
+                }}
+                className="h-9 rounded-xl border border-input bg-background px-3 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 input-premium appearance-none w-36"
                 data-ocid="schedule.class.select"
               >
-                <SelectValue placeholder="Class" />
-              </SelectTrigger>
-              <SelectContent>
-                {CLASS_OPTIONS.map((c) => (
-                  <SelectItem key={c} value={String(c)}>
-                    Class {c}
-                  </SelectItem>
+                <option value="">
+                  {classesLoading
+                    ? "Loading…"
+                    : !selectedAYId
+                      ? "Select Year first"
+                      : "Select Class"}
+                </option>
+                {classes.map((c) => (
+                  <option key={getClassId(c)} value={String(getClassId(c))}>
+                    {getClassName(c)}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
-            {/* Section selector */}
-            <Select
-              value={selectedSectionId}
-              onValueChange={(v) => setSelectedSectionId(v)}
-            >
-              <SelectTrigger
-                className="w-28 h-9 bg-background input-premium"
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+
+            {/* Section — uncontrolled */}
+            <div className="relative">
+              <select
+                ref={sectionRef}
+                defaultValue=""
+                onChange={(e) => setSelectedSection(e.target.value)}
+                className="h-9 rounded-xl border border-input bg-background px-3 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 input-premium appearance-none w-32"
                 data-ocid="schedule.section.select"
               >
-                <SelectValue placeholder="Section" />
-              </SelectTrigger>
-              <SelectContent>
-                {SECTION_OPTIONS.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    Section {s.label}
-                  </SelectItem>
+                <option value="">
+                  {sectionsLoading
+                    ? "Loading…"
+                    : !selectedClassId
+                      ? "Select Class first"
+                      : "Select Section"}
+                </option>
+                {sections.map((s) => (
+                  <option key={getSectionName(s)} value={getSectionName(s)}>
+                    Section {getSectionName(s)}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            </div>
+
             <div className="h-6 w-px bg-border hidden sm:block" />
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className={`gap-2 h-9 transition-smooth ${
@@ -575,6 +598,7 @@ export default function SchedulePage() {
               {editMode ? "Exit Edit" : "Edit Mode"}
             </Button>
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="gap-2 h-9"
@@ -584,6 +608,7 @@ export default function SchedulePage() {
               <Printer className="w-3.5 h-3.5" /> Print
             </Button>
             <Button
+              type="button"
               size="sm"
               className="gap-2 h-9 btn-school-primary"
               onClick={handleAutoSolve}
@@ -612,11 +637,8 @@ export default function SchedulePage() {
           className="flex items-center gap-3 p-4 rounded-xl bg-destructive/8 border border-destructive/25 text-sm text-destructive"
         >
           <TriangleAlert className="w-4 h-4 flex-shrink-0" />
-          <span>
-            Scheduling clash: a teacher is assigned to multiple classes in the
-            same period. Flagged cells are marked with{" "}
-            <TriangleAlert className="w-3 h-3 inline" />.
-          </span>
+          Scheduling clash: a teacher is assigned to multiple periods at the
+          same time.
         </motion.div>
       )}
 
@@ -624,12 +646,12 @@ export default function SchedulePage() {
       {subjects.length > 0 && (
         <div className="flex flex-wrap gap-2 items-center">
           {subjects.map((subject) => {
-            const colors = subjectColors[subject];
+            const colors = SUBJECT_COLORS[subject];
             if (!colors) return null;
             return (
               <span
                 key={subject}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border shadow-subtle ${colors.bg} ${colors.text} ${colors.border} transition-all duration-150 hover:shadow-card`}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${colors.bg} ${colors.text} ${colors.border}`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${colors.pill}`} />
                 {subject}
@@ -647,74 +669,17 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {/* Skeleton loader */}
-      {scheduleLoading && (
+      {/* Loading skeleton */}
+      {ttLoading && (
         <div className="space-y-3" data-ocid="schedule.loading_state">
           <Skeleton className="h-12 w-full rounded-xl" />
           <div
             className="grid gap-0 rounded-2xl overflow-hidden border border-border shadow-card"
             style={{ gridTemplateColumns: "90px repeat(5, 1fr)" }}
           >
-            {(
-              [
-                "s0",
-                "s1",
-                "s2",
-                "s3",
-                "s4",
-                "s5",
-                "s6",
-                "s7",
-                "s8",
-                "s9",
-                "s10",
-                "s11",
-                "s12",
-                "s13",
-                "s14",
-                "s15",
-                "s16",
-                "s17",
-                "s18",
-                "s19",
-                "s20",
-                "s21",
-                "s22",
-                "s23",
-                "s24",
-                "s25",
-                "s26",
-                "s27",
-                "s28",
-                "s29",
-                "s30",
-                "s31",
-                "s32",
-                "s33",
-                "s34",
-                "s35",
-                "s36",
-                "s37",
-                "s38",
-                "s39",
-                "s40",
-                "s41",
-                "s42",
-                "s43",
-                "s44",
-                "s45",
-                "s46",
-                "s47",
-                "s48",
-                "s49",
-                "s50",
-                "s51",
-                "s52",
-                "s53",
-              ] as const
-            ).map((k) => (
+            {Array.from({ length: 54 }, (_, k) => (
               <Skeleton
-                key={k}
+                key={`skel-${k + 1}`}
                 className="h-[88px] rounded-none border border-border/30"
               />
             ))}
@@ -723,9 +688,9 @@ export default function SchedulePage() {
       )}
 
       {/* Desktop timetable grid */}
-      {!scheduleLoading && (
+      {!ttLoading && selectedClassId > 0 && selectedSection && (
         <motion.div
-          key={`${selectedClassId}-${selectedSectionId}`}
+          key={`${selectedClassId}-${selectedSection}`}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, type: "tween" }}
@@ -735,7 +700,6 @@ export default function SchedulePage() {
             className="grid"
             style={{ gridTemplateColumns: "96px repeat(5, 1fr)" }}
           >
-            {/* Header row */}
             <div className="bg-muted/50 border-b border-r border-border px-3 py-4 flex items-center">
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
                 Period
@@ -747,22 +711,18 @@ export default function SchedulePage() {
                 className="bg-muted/50 border-b border-r border-border last:border-r-0 px-3 py-4 text-center"
               >
                 <p className="text-xs font-bold text-foreground uppercase tracking-widest">
-                  {DAY_LABELS[day]}
+                  {day}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5 font-medium">
                   {DAY_FULL[day]}
                 </p>
               </div>
             ))}
-
-            {/* Period rows */}
             {PERIODS.map((period, pi) => (
               <>
                 <div
-                  key={`period-label-${period}`}
-                  className={`border-b border-r border-border px-2 py-2 flex flex-col items-center justify-center ${
-                    pi % 2 === 0 ? "bg-muted/10" : "bg-card"
-                  }`}
+                  key={`lbl-${period}`}
+                  className={`border-b border-r border-border px-2 py-2 flex flex-col items-center justify-center ${pi % 2 === 0 ? "bg-muted/10" : "bg-card"}`}
                 >
                   <span className="text-sm font-bold text-foreground">
                     P{period}
@@ -774,16 +734,14 @@ export default function SchedulePage() {
                 {DAYS.map((day) => (
                   <div
                     key={`${day}-${period}`}
-                    className={`border-b border-r border-border last:border-r-0 ${
-                      pi % 2 === 0 ? "bg-muted/5" : "bg-card"
-                    }`}
+                    className={`border-b border-r border-border last:border-r-0 ${pi % 2 === 0 ? "bg-muted/5" : "bg-card"}`}
                     data-ocid={`schedule.${day.toLowerCase()}.period.${period}.card`}
                   >
                     <SubjectCell
-                      entry={timetableMap[`${day}-${period}`]}
+                      entry={ttMap[`${day}-${period}`]}
                       hasClash={clashKeys.has(`${day}-${period}`)}
                       editMode={editMode}
-                      onEdit={handleEditCell}
+                      onEdit={handleEdit}
                     />
                   </div>
                 ))}
@@ -794,7 +752,7 @@ export default function SchedulePage() {
       )}
 
       {/* Mobile stacked view */}
-      {!scheduleLoading && (
+      {!ttLoading && selectedClassId > 0 && selectedSection && (
         <div className="md:hidden space-y-4">
           {DAYS.map((day, di) => (
             <motion.div
@@ -817,10 +775,10 @@ export default function SchedulePage() {
               </div>
               <div className="divide-y divide-border/60">
                 {PERIODS.map((period) => {
-                  const entry = timetableMap[`${day}-${period}`];
+                  const entry = ttMap[`${day}-${period}`];
                   const hasClash = clashKeys.has(`${day}-${period}`);
                   const colors = entry
-                    ? (subjectColors[entry.subject] ?? DEFAULT_COLORS)
+                    ? (SUBJECT_COLORS[entry.subject] ?? DEFAULT_COLORS)
                     : DEFAULT_COLORS;
                   return (
                     <div
@@ -838,7 +796,7 @@ export default function SchedulePage() {
                       {entry ? (
                         <div className="flex-1 flex items-center gap-2">
                           <div
-                            className={`flex-1 px-3 py-2 rounded-xl border-2 ${colors.bg} ${colors.border} transition-all duration-150`}
+                            className={`flex-1 px-3 py-2 rounded-xl border-2 ${colors.bg} ${colors.border}`}
                           >
                             <p className={`text-xs font-bold ${colors.text}`}>
                               {entry.subject}
@@ -852,11 +810,9 @@ export default function SchedulePage() {
                           )}
                         </div>
                       ) : (
-                        <div className="flex-1">
-                          <p className="text-xs text-muted-foreground/40 font-medium">
-                            Free Period
-                          </p>
-                        </div>
+                        <p className="text-xs text-muted-foreground/40 font-medium">
+                          Free Period
+                        </p>
                       )}
                     </div>
                   );
@@ -868,34 +824,47 @@ export default function SchedulePage() {
       )}
 
       {/* Empty state */}
-      {!scheduleLoading && timetable.length === 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="text-center py-24 text-muted-foreground"
-          data-ocid="schedule.empty_state"
-        >
-          <div className="w-20 h-20 mx-auto rounded-2xl bg-muted/40 flex items-center justify-center mb-5 shadow-card">
-            <BookOpen className="w-9 h-9 opacity-40" />
-          </div>
-          <p className="font-bold text-lg font-display">
-            No timetable for {timetableTitle}
-          </p>
-          <p className="text-sm mt-1.5 text-muted-foreground/70 max-w-xs mx-auto">
-            Select a different class or section, or use Auto-Solve to generate a
-            schedule.
-          </p>
-          <Button
-            className="mt-5 btn-school-primary gap-2"
-            onClick={handleAutoSolve}
-            disabled={autoSolving}
-            data-ocid="schedule.empty_auto_solve.button"
+      {!ttLoading &&
+        (!selectedClassId ||
+          !selectedSection ||
+          (selectedClassId > 0 &&
+            selectedSection &&
+            localTimetable.length === 0)) && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="text-center py-24 text-muted-foreground"
+            data-ocid="schedule.empty_state"
           >
-            <Sparkles className="w-4 h-4" /> Generate Timetable
-          </Button>
-        </motion.div>
-      )}
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-muted/40 flex items-center justify-center mb-5 shadow-card">
+              <BookOpen className="w-9 h-9 opacity-40" />
+            </div>
+            <p className="font-bold text-lg font-display">
+              {!selectedClassId
+                ? "Select a class to view its timetable"
+                : !selectedSection
+                  ? "Select a section"
+                  : `No timetable found for ${timetableTitle}`}
+            </p>
+            <p className="text-sm mt-1.5 text-muted-foreground/70 max-w-xs mx-auto">
+              {selectedClassId &&
+                selectedSection &&
+                "Use Auto-Solve to generate a schedule or edit periods manually."}
+            </p>
+            {selectedClassId && selectedSection && (
+              <Button
+                type="button"
+                className="mt-5 btn-school-primary gap-2"
+                onClick={handleAutoSolve}
+                disabled={autoSolving}
+                data-ocid="schedule.empty_auto_solve.button"
+              >
+                <Sparkles className="w-4 h-4" /> Generate Timetable
+              </Button>
+            )}
+          </motion.div>
+        )}
     </motion.div>
   );
 }

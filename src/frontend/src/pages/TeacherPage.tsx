@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   type CreateLessonPlanRequest,
   useCreateLessonPlan,
@@ -54,6 +55,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Award,
   BookOpen,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -63,6 +65,7 @@ import {
   PlusCircle,
   Save,
   Search,
+  Star,
   Trash2,
   Users,
   Video,
@@ -70,6 +73,39 @@ import {
 import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
+
+// ─── DTOs ────────────────────────────────────────────────────────────────────
+
+type TeacherSubjectAllocationDto = {
+  teacherSubjectAllocationId: number;
+  teacherId: number;
+  teacherName: string;
+  subjectId: number;
+  subjectName: string;
+  subjectCode: string;
+  classId: number;
+  className: string;
+  isActive: boolean;
+  createTs: string;
+};
+
+type ClassTeacherDto = {
+  classTeacherId: number;
+  classId: number;
+  className: string;
+  teacherId: number;
+  teacherName: string;
+  teacherEmail: string;
+  isActive: boolean;
+  createTs: string;
+};
+
+type TimetableSlot = {
+  period: number;
+  day: string;
+  subjectName?: string;
+  className?: string;
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,6 +137,31 @@ const CLASS_OPTIONS = [
 ];
 const TERM_OPTIONS = ["Q1", "Q2", "Q3", "Q4", "Term 1", "Term 2", "Term 3"];
 
+const TIMETABLE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const TIMETABLE_PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+const PERIOD_TIMES: Record<number, string> = {
+  1: "7:30",
+  2: "8:25",
+  3: "9:20",
+  4: "10:30",
+  5: "11:25",
+  6: "13:00",
+  7: "13:55",
+  8: "14:50",
+};
+const DAY_MAP: Record<string, string> = {
+  Monday: "Mon",
+  Tuesday: "Tue",
+  Wednesday: "Wed",
+  Thursday: "Thu",
+  Friday: "Fri",
+  mon: "Mon",
+  tue: "Tue",
+  wed: "Wed",
+  thu: "Thu",
+  fri: "Fri",
+};
+
 // ─── Grade chip color helper ──────────────────────────────────────────────────
 
 function gradeColor(grade: string): string {
@@ -111,6 +172,370 @@ function gradeColor(grade: string): string {
   if (grade.startsWith("C"))
     return "bg-amber-500/10 text-amber-700 border-amber-300/40";
   return "bg-destructive/10 text-destructive border-destructive/30";
+}
+
+// ─── My Teacher Dashboard ────────────────────────────────────────────────────
+
+function useClassTeacher(teacherId: string | null) {
+  return useQuery<ClassTeacherDto | null>({
+    queryKey: ["class-teacher", teacherId],
+    queryFn: async () => {
+      if (!teacherId) return null;
+      const res = await api.get<unknown>(
+        `/class-teachers?teacherId=${teacherId}`,
+      );
+      if (!res.success) return null;
+      const raw = res.data;
+      if (Array.isArray(raw)) {
+        const match = (raw as ClassTeacherDto[]).find(
+          (r) => String(r.teacherId) === String(teacherId) && r.isActive,
+        );
+        return match ?? null;
+      }
+      const unwrapped =
+        (raw as Record<string, unknown>)?.data ??
+        (raw as Record<string, unknown>)?.Data;
+      if (Array.isArray(unwrapped)) {
+        const match = (unwrapped as ClassTeacherDto[]).find(
+          (r) => String(r.teacherId) === String(teacherId) && r.isActive,
+        );
+        return match ?? null;
+      }
+      return null;
+    },
+    enabled: !!teacherId,
+  });
+}
+
+function useMySubjects(teacherId: string | null) {
+  return useQuery<TeacherSubjectAllocationDto[]>({
+    queryKey: ["teacher-subject-allocations", teacherId],
+    queryFn: async () => {
+      if (!teacherId) return [];
+      const res = await api.get<unknown>(
+        `/teacher-subject-allocations?teacherId=${teacherId}`,
+      );
+      if (!res.success) return [];
+      const raw = res.data;
+      if (Array.isArray(raw)) return raw as TeacherSubjectAllocationDto[];
+      const data =
+        (raw as Record<string, unknown>)?.data ??
+        (raw as Record<string, unknown>)?.Data;
+      if (Array.isArray(data)) return data as TeacherSubjectAllocationDto[];
+      return [];
+    },
+    enabled: !!teacherId,
+  });
+}
+
+function useMyTimetable(teacherId: string | null) {
+  return useQuery<TimetableSlot[]>({
+    queryKey: ["teacher-timetable", teacherId],
+    queryFn: async () => {
+      if (!teacherId) return [];
+      const res = await api.get<unknown>(`/timetable?teacherId=${teacherId}`);
+      if (!res.success) return [];
+      const raw = res.data;
+      if (Array.isArray(raw)) return raw as TimetableSlot[];
+      const data =
+        (raw as Record<string, unknown>)?.data ??
+        (raw as Record<string, unknown>)?.Data;
+      if (Array.isArray(data)) return data as TimetableSlot[];
+      return [];
+    },
+    enabled: !!teacherId,
+  });
+}
+
+function MyTeacherDashboard({ teacherId }: { teacherId: string }) {
+  const { data: classTeacher, isLoading: ctLoading } =
+    useClassTeacher(teacherId);
+  const { data: subjects = [], isLoading: subjectsLoading } =
+    useMySubjects(teacherId);
+  const { data: timetableSlots = [], isLoading: ttLoading } =
+    useMyTimetable(teacherId);
+
+  // Build timetable grid: { "Mon-1": slot, ... }
+  const ttGrid = timetableSlots.reduce<Record<string, TimetableSlot>>(
+    (acc, slot) => {
+      const dayKey = DAY_MAP[slot.day] ?? slot.day.slice(0, 3);
+      const key = `${dayKey}-${slot.period}`;
+      acc[key] = slot;
+      return acc;
+    },
+    {},
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Class Teacher Badge */}
+      {ctLoading ? (
+        <Skeleton className="h-20 rounded-2xl" />
+      ) : classTeacher ? (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative overflow-hidden rounded-2xl border border-amber-300/60 bg-gradient-to-r from-amber-50 to-yellow-50 p-5 shadow-sm"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.97 0.05 85), oklch(0.95 0.08 80))",
+          }}
+          data-ocid="teacher.dashboard.class_teacher_badge"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-amber-400/20 border border-amber-400/40 flex-shrink-0">
+              <Star className="w-6 h-6 text-amber-600 fill-amber-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-widest text-amber-700 mb-0.5">
+                Class Teacher
+              </p>
+              <h2 className="text-xl font-bold font-display text-amber-900 leading-tight">
+                You are the Class Teacher of{" "}
+                <span className="text-amber-700">{classTeacher.className}</span>
+              </h2>
+            </div>
+            <Award className="w-10 h-10 text-amber-300/80 hidden sm:block flex-shrink-0" />
+          </div>
+        </motion.div>
+      ) : null}
+
+      {/* My Subjects */}
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-4">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center"
+            style={{ background: "var(--color-primary-light)" }}
+          >
+            <BookOpen
+              className="w-4 h-4"
+              style={{ color: "var(--color-primary)" }}
+            />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-semibold font-display text-foreground">
+              My Subjects
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Classes and subjects assigned to you
+            </p>
+          </div>
+          {subjects.length > 0 && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+              {subjects.length}
+            </span>
+          )}
+        </div>
+
+        <div className="overflow-x-auto">
+          <Table data-ocid="teacher.dashboard.subjects.table">
+            <TableHeader>
+              <TableRow className="bg-muted/20">
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Class
+                </TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Subject
+                </TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wide">
+                  Code
+                </TableHead>
+                <TableHead className="text-right font-semibold text-xs uppercase tracking-wide">
+                  Actions
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {subjectsLoading ? (
+                [1, 2, 3].map((k) => (
+                  <TableRow key={k}>
+                    <TableCell colSpan={4}>
+                      <Skeleton className="h-10 rounded-lg" />
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : subjects.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="text-center text-muted-foreground text-sm py-12"
+                    data-ocid="teacher.dashboard.subjects.empty_state"
+                  >
+                    <BookOpen className="w-9 h-9 mx-auto mb-3 text-muted-foreground/30" />
+                    <p className="font-medium">No subjects assigned yet</p>
+                    <p className="text-xs mt-1">Contact your administrator.</p>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                subjects.map((s, i) => (
+                  <TableRow
+                    key={s.teacherSubjectAllocationId}
+                    className="table-row-hover"
+                    data-ocid={`teacher.dashboard.subjects.item.${i + 1}`}
+                  >
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                        {s.className}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-semibold text-sm text-foreground">
+                      {s.subjectName}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {s.subjectCode}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1.5 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                          onClick={() =>
+                            window.location.assign(
+                              `/attendance?classId=${s.classId}`,
+                            )
+                          }
+                          data-ocid={`teacher.dashboard.subjects.attendance.${i + 1}.button`}
+                        >
+                          <Users className="w-3 h-3" /> Attendance
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs gap-1.5 btn-press"
+                          style={{ background: "var(--color-primary)" }}
+                          onClick={() =>
+                            window.location.assign(
+                              `/exams?classId=${s.classId}&subjectId=${s.subjectId}`,
+                            )
+                          }
+                          data-ocid={`teacher.dashboard.subjects.marks.${i + 1}.button`}
+                        >
+                          <Award className="w-3 h-3" /> Marks
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      {/* My Timetable */}
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="p-5 border-b border-border bg-muted/20 flex items-center gap-4">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center"
+            style={{ background: "var(--color-primary-light)" }}
+          >
+            <CalendarDays
+              className="w-4 h-4"
+              style={{ color: "var(--color-primary)" }}
+            />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-semibold font-display text-foreground">
+              My Timetable
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Your weekly teaching schedule
+            </p>
+          </div>
+        </div>
+
+        {ttLoading ? (
+          <div className="p-5 space-y-2">
+            {[1, 2, 3].map((k) => (
+              <Skeleton key={k} className="h-10 rounded-lg" />
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <div
+              className="grid min-w-[640px]"
+              style={{ gridTemplateColumns: "72px repeat(5, 1fr)" }}
+              data-ocid="teacher.dashboard.timetable"
+            >
+              {/* Header row */}
+              <div className="bg-muted/40 border-b border-r border-border px-2 py-2.5 text-xs font-semibold text-muted-foreground text-center">
+                Period
+              </div>
+              {TIMETABLE_DAYS.map((d) => (
+                <div
+                  key={d}
+                  className="bg-muted/40 border-b border-r last:border-r-0 border-border px-3 py-2.5 text-center text-xs font-bold text-foreground"
+                >
+                  {d}
+                </div>
+              ))}
+              {/* Data rows */}
+              {TIMETABLE_PERIODS.map((period) => (
+                <>
+                  <div
+                    key={`lbl-${period}`}
+                    className="border-b border-r border-border px-2 py-3 flex flex-col items-center justify-center bg-muted/20"
+                  >
+                    <span className="text-xs font-bold text-foreground">
+                      {period}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {PERIOD_TIMES[period]}
+                    </span>
+                  </div>
+                  {TIMETABLE_DAYS.map((day) => {
+                    const key = `${day}-${period}`;
+                    const slot = ttGrid[key];
+                    return (
+                      <div
+                        key={key}
+                        className="border-b border-r last:border-r-0 border-border min-h-[64px] p-1.5"
+                      >
+                        {slot ? (
+                          <div
+                            className="h-full rounded-lg p-2 flex flex-col justify-between"
+                            style={{
+                              background: "var(--color-primary-light)",
+                              border: "1px solid var(--color-primary)",
+                            }}
+                          >
+                            <p
+                              className="text-xs font-semibold leading-tight"
+                              style={{ color: "var(--color-primary)" }}
+                            >
+                              {slot.subjectName ?? "—"}
+                            </p>
+                            {slot.className && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {slot.className}
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!ttLoading && timetableSlots.length === 0 && (
+          <div
+            className="text-center py-10 text-muted-foreground text-sm"
+            data-ocid="teacher.dashboard.timetable.empty_state"
+          >
+            <CalendarDays className="w-9 h-9 mx-auto mb-3 text-muted-foreground/30" />
+            <p className="font-medium">No timetable assigned yet</p>
+            <p className="text-xs mt-1">
+              Contact your administrator to set up your schedule.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Online Classes Tab ───────────────────────────────────────────────────────
@@ -1622,7 +2047,11 @@ function LessonPlannerTab({ teacherId }: { teacherId: number }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TeacherPage() {
-  const CURRENT_TEACHER_ID = 1;
+  const { user } = useAuth();
+  const isTeacherRole = user?.role === "teacher";
+  const teacherId = user?.id ?? null;
+
+  const CURRENT_TEACHER_ID = teacherId ? Number(teacherId) : 1;
   const [selectedTeacherId, setSelectedTeacherId] = useState<number | null>(
     null,
   );
@@ -1638,11 +2067,14 @@ export default function TeacherPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold font-display text-foreground">
-            Teacher Portal
+            {isTeacherRole
+              ? `Welcome, ${user?.name ?? user?.username ?? "Teacher"}`
+              : "Teacher Portal"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Teacher directory, gradebook, lesson planning, and online class
-            management
+            {isTeacherRole
+              ? "Your assigned classes, subjects, and weekly timetable"
+              : "Teacher directory, gradebook, lesson planning, and online class management"}
           </p>
         </div>
         {isDemoMode() && (
@@ -1652,13 +2084,20 @@ export default function TeacherPage() {
         )}
       </div>
 
-      <Tabs defaultValue="teachers">
+      {/* Teacher Dashboard — shown only when teacher role logs in */}
+      {isTeacherRole && teacherId && (
+        <MyTeacherDashboard teacherId={teacherId} />
+      )}
+
+      <Tabs defaultValue={isTeacherRole ? "online" : "teachers"}>
         <TabsList
           className="border-b border-border rounded-none bg-transparent p-0 h-auto gap-0"
           data-ocid="teacher.tab"
         >
           {[
-            { value: "teachers", label: "Teachers", icon: Users },
+            ...(!isTeacherRole
+              ? [{ value: "teachers", label: "Teachers", icon: Users }]
+              : []),
             { value: "gradebook", label: "Gradebook", icon: BookOpen },
             { value: "planner", label: "Lesson Planner", icon: GraduationCap },
             { value: "online", label: "Online Classes", icon: Video },
@@ -1675,16 +2114,18 @@ export default function TeacherPage() {
           ))}
         </TabsList>
 
-        <TabsContent value="teachers" className="mt-6">
-          {selectedTeacherId !== null ? (
-            <TeacherDetail
-              teacherId={selectedTeacherId}
-              onBack={() => setSelectedTeacherId(null)}
-            />
-          ) : (
-            <TeacherList onSelect={setSelectedTeacherId} />
-          )}
-        </TabsContent>
+        {!isTeacherRole && (
+          <TabsContent value="teachers" className="mt-6">
+            {selectedTeacherId !== null ? (
+              <TeacherDetail
+                teacherId={selectedTeacherId}
+                onBack={() => setSelectedTeacherId(null)}
+              />
+            ) : (
+              <TeacherList onSelect={setSelectedTeacherId} />
+            )}
+          </TabsContent>
+        )}
 
         <TabsContent value="gradebook" className="mt-6">
           <GradebookTab teacherId={CURRENT_TEACHER_ID} />

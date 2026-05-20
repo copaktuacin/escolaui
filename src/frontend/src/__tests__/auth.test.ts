@@ -237,9 +237,9 @@ describe("token storage after login", () => {
 
     // Simulate what AuthContext does after successful loginFetch
     if (res.success && res.data) {
-      const { accessToken, refreshToken } = res.data;
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken);
+      const data = res.data as Record<string, unknown>;
+      localStorage.setItem("accessToken", data.accessToken as string);
+      localStorage.setItem("refreshToken", data.refreshToken as string);
     }
 
     expect(localStorage.getItem("accessToken")).toBe("new-access-token");

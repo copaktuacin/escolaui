@@ -31,6 +31,9 @@ export const roleNavPaths: Record<string, string[]> = {
     "/notifications",
     "/principal",
     "/reports",
+    "/setup",
+    "/class-teachers",
+    "/subject-allotment",
   ],
   teacher: [
     "/dashboard",

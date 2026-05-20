@@ -1,91 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   type PaymentSummary,
-  type Subscription,
-  adminGetSubscriptionPlans,
-  adminGetSubscriptions,
+  type Tenant,
+  adminGetPaymentSummary,
+  adminGetTenants,
+  resolveTenantId,
 } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_SUBS: Subscription[] = [
-  {
-    id: 1,
-    tenantId: 1,
-    schoolName: "Springfield Academy",
-    plan: "Premium",
-    status: "Active",
-    startDate: "2024-09-01T00:00:00Z",
-    nextBillingDate: "2026-05-01T00:00:00Z",
-    amount: 4900,
-    outstandingAmount: 0,
-  },
-  {
-    id: 2,
-    tenantId: 2,
-    schoolName: "Riverside Public School",
-    plan: "Standard",
-    status: "Active",
-    startDate: "2024-11-15T00:00:00Z",
-    nextBillingDate: "2026-05-15T00:00:00Z",
-    amount: 2900,
-    outstandingAmount: 0,
-  },
-  {
-    id: 3,
-    tenantId: 3,
-    schoolName: "Lakewood International",
-    plan: "Basic",
-    status: "Overdue",
-    startDate: "2025-01-10T00:00:00Z",
-    nextBillingDate: "2026-04-10T00:00:00Z",
-    amount: 900,
-    outstandingAmount: 2400,
-  },
-  {
-    id: 4,
-    tenantId: 4,
-    schoolName: "Greenhill Primary",
-    plan: "Standard",
-    status: "Active",
-    startDate: "2025-03-20T00:00:00Z",
-    nextBillingDate: "2026-06-20T00:00:00Z",
-    amount: 2900,
-    outstandingAmount: 0,
-  },
-  {
-    id: 5,
-    tenantId: 5,
-    schoolName: "Westbrook High School",
-    plan: "Premium",
-    status: "Paused",
-    startDate: "2025-04-01T00:00:00Z",
-    nextBillingDate: "2026-05-25T00:00:00Z",
-    amount: 4900,
-    outstandingAmount: 1200,
-  },
-];
-
-const MOCK_SUMMARY: PaymentSummary = {
-  totalPayments: 38,
-  totalAmount: 10700,
-  successfulPayments: 35,
-  failedPayments: 1,
-  pendingPayments: 2,
-};
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type StatusFilter = "all" | "Active" | "Paused" | "Overdue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const STATUS_STYLES: Record<string, string> = {
-  Active: "bg-emerald-900/30 text-emerald-400 border-emerald-700/40",
-  Paused: "bg-gray-800 text-gray-400 border-gray-700",
-  Overdue: "bg-red-900/30 text-red-400 border-red-700/40",
-};
 
 const PLAN_STYLES: Record<string, string> = {
   Basic: "text-blue-400",
@@ -93,71 +15,70 @@ const PLAN_STYLES: Record<string, string> = {
   Premium: "text-amber-400",
 };
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${STATUS_STYLES[status] ?? STATUS_STYLES.Paused}`}
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {status}
-    </span>
-  );
-}
-
-function daysUntil(dateStr: string) {
-  return Math.ceil(
-    (new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-  );
-}
-
-function DaysLeft({ date }: { date: string }) {
-  const d = daysUntil(date);
-  const color = d < 0 ? "#f87171" : d < 14 ? "#fbbf24" : "#34d399";
-  return (
-    <span className="text-xs font-semibold tabular-nums" style={{ color }}>
-      {d < 0 ? `${Math.abs(d)}d overdue` : `${d}d`}
-    </span>
-  );
+function normalizeTenant(raw: unknown): Tenant {
+  const r = raw as Record<string, unknown>;
+  const id = Number(resolveTenantId(r) ?? 0);
+  return {
+    ...r,
+    id,
+    schoolName: (r.SchoolName as string) ?? (r.schoolName as string) ?? "",
+    adminEmail:
+      (r.AdminEmail as string) ??
+      (r.Email as string) ??
+      (r.adminEmail as string) ??
+      "",
+    subscriptionPlan: ((r.SubscriptionPlan as string) ??
+      (r.subscriptionPlan as string) ??
+      "") as "Basic" | "Standard" | "Premium",
+    isActive: Boolean(
+      (r.IsActive as unknown) ?? (r.isActive as unknown) ?? false,
+    ),
+    createdAt:
+      (r.CreatedAt as string) ??
+      (r.createdAt as string) ??
+      new Date().toISOString(),
+  } as Tenant;
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlatformAdminSubscriptionsPage() {
-  const [subs, setSubs] = useState<Subscription[]>([]);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [summary, setSummary] = useState<PaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [summaryUnavailable, setSummaryUnavailable] = useState(false);
   const [search, setSearch] = useState("");
+  const [planFilter, setPlanFilter] = useState<
+    "all" | "Basic" | "Standard" | "Premium"
+  >("all");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setSummaryUnavailable(false);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 400));
-        setSubs(MOCK_SUBS);
-        setSummary(MOCK_SUMMARY);
+      const [tenantsRes, summaryRes] = await Promise.all([
+        adminGetTenants(1, 200),
+        adminGetPaymentSummary(),
+      ]);
+
+      // Tenants
+      const rawList: unknown[] = Array.isArray(tenantsRes.data)
+        ? (tenantsRes.data as unknown[])
+        : Array.isArray((tenantsRes.data as { data?: unknown[] })?.data)
+          ? (tenantsRes.data as { data: unknown[] }).data
+          : [];
+      setTenants(rawList.map(normalizeTenant));
+
+      // Payment summary: graceful 404
+      if (summaryRes.success && summaryRes.data) {
+        setSummary(summaryRes.data as PaymentSummary);
       } else {
-        const [subsRes, summaryRes] = await Promise.all([
-          adminGetSubscriptions(1, 100),
-          adminGetSubscriptionPlans(),
-        ]);
-        const d = subsRes.data as { data?: Subscription[] } | null;
-        setSubs(Array.isArray(d?.data) ? d.data : []);
-        // Payment summary: graceful 404 — show zeroed KPIs rather than crashing
-        if (summaryRes.success && summaryRes.data) {
-          setSummary(summaryRes.data);
-        } else {
-          const is404 =
-            summaryRes.error?.includes("Not Found") ||
-            summaryRes.error?.includes("404");
-          if (!is404) {
-            console.warn(
-              "[EscolaUI] Subscription plans error:",
-              summaryRes.error,
-            );
-          }
-          // Leave summary as null — KPI strip will not render
-        }
+        const is404 =
+          summaryRes.error?.includes("Not Found") ||
+          summaryRes.error?.includes("404");
+        if (is404) setSummaryUnavailable(true);
+        else
+          console.warn("[EscolaUI] Payment summary error:", summaryRes.error);
       }
     } finally {
       setLoading(false);
@@ -168,75 +89,73 @@ export default function PlatformAdminSubscriptionsPage() {
     fetchData();
   }, [fetchData]);
 
-  const filtered = subs.filter((s) => {
-    const matchStatus = statusFilter === "all" || s.status === statusFilter;
+  const filtered = tenants.filter((t) => {
     const matchSearch =
       !search.trim() ||
-      s.schoolName.toLowerCase().includes(search.toLowerCase());
-    return matchStatus && matchSearch;
+      t.schoolName.toLowerCase().includes(search.toLowerCase());
+    const matchPlan = planFilter === "all" || t.subscriptionPlan === planFilter;
+    return matchSearch && matchPlan;
   });
-
-  const STATUS_TABS: { label: string; value: StatusFilter }[] = [
-    { label: `All (${subs.length})`, value: "all" },
-    {
-      label: `Active (${subs.filter((s) => s.status === "Active").length})`,
-      value: "Active",
-    },
-    {
-      label: `Paused (${subs.filter((s) => s.status === "Paused").length})`,
-      value: "Paused",
-    },
-    {
-      label: `Overdue (${subs.filter((s) => s.status === "Overdue").length})`,
-      value: "Overdue",
-    },
-  ];
 
   const kpis = summary
     ? [
         {
           label: "Total Payments",
-          value: (summary?.totalPayments ?? 0).toLocaleString(),
+          value: String(summary.totalPayments),
           color: "#60a5fa",
         },
         {
           label: "Total Amount",
-          value: `₹${(summary?.totalAmount ?? 0).toLocaleString()}`,
+          value: `₹${summary.totalAmount.toLocaleString()}`,
           color: "#a78bfa",
         },
         {
           label: "Successful",
-          value: (summary?.successfulPayments ?? 0).toLocaleString(),
+          value: String(summary.successfulPayments),
           color: "#34d399",
         },
         {
           label: "Failed",
-          value: (summary?.failedPayments ?? 0).toLocaleString(),
+          value: String(summary.failedPayments),
           color: "#f87171",
         },
         {
           label: "Pending",
-          value: (summary?.pendingPayments ?? 0).toLocaleString(),
+          value: String(summary.pendingPayments),
           color: "#fbbf24",
         },
       ]
     : [];
 
+  const PLAN_TABS = [
+    { label: `All (${tenants.length})`, value: "all" as const },
+    {
+      label: `Basic (${tenants.filter((t) => t.subscriptionPlan === "Basic").length})`,
+      value: "Basic" as const,
+    },
+    {
+      label: `Standard (${tenants.filter((t) => t.subscriptionPlan === "Standard").length})`,
+      value: "Standard" as const,
+    },
+    {
+      label: `Premium (${tenants.filter((t) => t.subscriptionPlan === "Premium").length})`,
+      value: "Premium" as const,
+    },
+  ];
+
   return (
     <div className="space-y-6" data-ocid="subscriptions.page">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
-            Subscription Management
-          </h1>
-          <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
-            Monitor all tenant subscription plans and billing status
-          </p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
+          Subscription Management
+        </h1>
+        <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
+          Monitor all tenant subscription plans and payment data
+        </p>
       </div>
 
-      {/* KPI strip */}
+      {/* KPI Strip */}
       {loading ? (
         <div
           className="grid grid-cols-2 sm:grid-cols-5 gap-3"
@@ -249,6 +168,16 @@ export default function PlatformAdminSubscriptionsPage() {
               style={{ background: "#1e293b" }}
             />
           ))}
+        </div>
+      ) : summaryUnavailable ? (
+        <div
+          className="rounded-xl p-4 border text-center"
+          style={{ background: "#1e293b", borderColor: "#334155" }}
+          data-ocid="subscriptions.kpis.empty_state"
+        >
+          <p className="text-sm" style={{ color: "#64748b" }}>
+            Payment data not yet available from server
+          </p>
         </div>
       ) : kpis.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -270,17 +199,7 @@ export default function PlatformAdminSubscriptionsPage() {
             </div>
           ))}
         </div>
-      ) : (
-        <div
-          className="rounded-xl p-4 border text-center"
-          style={{ background: "#1e293b", borderColor: "#334155" }}
-          data-ocid="subscriptions.kpis.empty_state"
-        >
-          <p className="text-sm" style={{ color: "#64748b" }}>
-            Payment data not available yet
-          </p>
-        </div>
-      )}
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -305,18 +224,22 @@ export default function PlatformAdminSubscriptionsPage() {
           />
         </div>
         <div className="flex gap-2 flex-wrap">
-          {STATUS_TABS.map((tab) => (
+          {PLAN_TABS.map((tab) => (
             <button
               key={tab.value}
               type="button"
-              onClick={() => setStatusFilter(tab.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${statusFilter === tab.value ? "text-white" : "border text-gray-500 hover:text-gray-300"}`}
+              onClick={() => setPlanFilter(tab.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                planFilter === tab.value
+                  ? "text-white"
+                  : "border text-gray-500 hover:text-gray-300"
+              }`}
               style={
-                statusFilter === tab.value
+                planFilter === tab.value
                   ? { background: "#4f46e5" }
                   : { background: "#1e293b", borderColor: "#334155" }
               }
-              data-ocid={`subscriptions.status_filter.${tab.value}.tab`}
+              data-ocid={`subscriptions.plan_filter.${tab.value}.tab`}
             >
               {tab.label}
             </button>
@@ -329,21 +252,18 @@ export default function PlatformAdminSubscriptionsPage() {
         className="rounded-2xl border overflow-hidden"
         style={{ background: "#1a2234", borderColor: "#1e293b" }}
       >
-        {/* Table header */}
         <div
           className="hidden md:grid gap-4 px-5 py-3 border-b text-xs font-semibold uppercase tracking-wide"
           style={{
             borderColor: "#1e293b",
             color: "#475569",
-            gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 1.2fr",
+            gridTemplateColumns: "2fr 1fr 1fr 1fr",
           }}
         >
           <span>School</span>
           <span>Plan</span>
-          <span>Amount</span>
-          <span>Next Billing</span>
-          <span>Days Left</span>
           <span>Status</span>
+          <span>Created</span>
         </div>
 
         {loading ? (
@@ -368,10 +288,6 @@ export default function PlatformAdminSubscriptionsPage() {
                     style={{ background: "#1e293b" }}
                   />
                 </div>
-                <div
-                  className="h-5 w-16 rounded-full animate-pulse"
-                  style={{ background: "#1e293b" }}
-                />
               </div>
             ))}
           </div>
@@ -381,35 +297,36 @@ export default function PlatformAdminSubscriptionsPage() {
             data-ocid="subscriptions.empty_state"
           >
             <p className="text-sm font-medium" style={{ color: "#f1f5f9" }}>
-              No subscriptions match your filters
+              {search ? "No schools match your search" : "No schools found"}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setStatusFilter("all");
-                setSearch("");
-              }}
-              className="mt-4 px-4 py-2 rounded-lg text-sm border"
-              style={{
-                background: "#1e293b",
-                borderColor: "#334155",
-                color: "#94a3b8",
-              }}
-              data-ocid="subscriptions.clear_filters.button"
-            >
-              Clear filters
-            </button>
+            {(search || planFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setPlanFilter("all");
+                }}
+                className="mt-4 px-4 py-2 rounded-lg text-sm border"
+                style={{
+                  background: "#1e293b",
+                  borderColor: "#334155",
+                  color: "#94a3b8",
+                }}
+                data-ocid="subscriptions.clear_filters.button"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
           <div>
-            {filtered.map((sub, i) => (
+            {filtered.map((t, i) => (
               <div
-                key={sub.id}
-                className="px-5 py-3.5 border-b transition-colors hover:bg-white/[0.02] grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_1.2fr_1fr_1.2fr] gap-2 md:gap-4 items-center"
+                key={resolveTenantId(t) ?? i}
+                className="px-5 py-3.5 border-b grid grid-cols-1 md:grid-cols-[2fr_1fr_1fr_1fr] gap-2 md:gap-4 items-center transition-colors hover:bg-white/[0.02]"
                 style={{ borderColor: "#1e293b" }}
                 data-ocid={`subscriptions.row.item.${i + 1}`}
               >
-                {/* School */}
                 <div className="flex items-center gap-3 min-w-0">
                   <div
                     className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
@@ -417,44 +334,50 @@ export default function PlatformAdminSubscriptionsPage() {
                       background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
                     }}
                   >
-                    {sub.schoolName
+                    {t.schoolName
                       .split(" ")
                       .map((w) => w[0])
                       .slice(0, 2)
                       .join("")}
                   </div>
-                  <p
-                    className="text-sm font-semibold truncate"
-                    style={{ color: "#e2e8f0" }}
-                  >
-                    {sub.schoolName}
-                  </p>
+                  <div className="min-w-0">
+                    <p
+                      className="text-sm font-semibold truncate"
+                      style={{ color: "#e2e8f0" }}
+                    >
+                      {t.schoolName}
+                    </p>
+                    <p
+                      className="text-xs truncate"
+                      style={{ color: "#475569" }}
+                    >
+                      {t.adminEmail}
+                    </p>
+                  </div>
                 </div>
-                {/* Plan */}
                 <span
-                  className={`text-xs font-semibold ${PLAN_STYLES[sub.plan] ?? "text-gray-400"}`}
+                  className={`text-xs font-semibold ${PLAN_STYLES[t.subscriptionPlan] ?? "text-gray-400"}`}
                 >
-                  {sub.plan}
+                  {t.subscriptionPlan || "—"}
                 </span>
-                {/* Amount */}
-                <p
-                  className="text-sm font-bold tabular-nums"
-                  style={{ color: "#f1f5f9" }}
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold w-fit ${
+                    t.isActive
+                      ? "bg-emerald-900/30 text-emerald-400 border border-emerald-700/40"
+                      : "bg-gray-800 text-gray-500 border border-gray-700"
+                  }`}
                 >
-                  ₹{sub.amount.toLocaleString()}
-                </p>
-                {/* Next billing */}
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${t.isActive ? "bg-emerald-400" : "bg-gray-600"}`}
+                  />
+                  {t.isActive ? "Active" : "Inactive"}
+                </span>
                 <p className="text-xs" style={{ color: "#64748b" }}>
-                  {new Date(sub.nextBillingDate).toLocaleDateString("en-US", {
+                  {new Date(t.createdAt).toLocaleDateString("en-US", {
                     month: "short",
-                    day: "numeric",
                     year: "numeric",
                   })}
                 </p>
-                {/* Days */}
-                <DaysLeft date={sub.nextBillingDate} />
-                {/* Status */}
-                <StatusBadge status={sub.status} />
               </div>
             ))}
           </div>
@@ -462,23 +385,18 @@ export default function PlatformAdminSubscriptionsPage() {
       </div>
 
       {!loading && filtered.length > 0 && (
-        <div
-          className="flex items-center justify-between text-xs px-1"
-          style={{ color: "#475569" }}
-        >
-          <span>
-            {filtered.length} tenant{filtered.length !== 1 ? "s" : ""} shown
-          </span>
+        <p className="text-xs px-1" style={{ color: "#475569" }}>
+          {filtered.length} school{filtered.length !== 1 ? "s" : ""} shown
           {summary && (
-            <span>
-              Pending:{" "}
+            <>
+              {" "}
+              · Pending:{" "}
               <strong style={{ color: "#fbbf24" }}>
-                {summary?.pendingPayments ?? 0} payment
-                {(summary?.pendingPayments ?? 0) !== 1 ? "s" : ""}
+                {summary.pendingPayments}
               </strong>
-            </span>
+            </>
           )}
-        </div>
+        </p>
       )}
     </div>
   );

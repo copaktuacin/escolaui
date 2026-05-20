@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,250 +27,192 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  type Invoice,
+  useFeeConcessions,
+  useFeePayment,
+  useFees,
+} from "@/hooks/useQueries";
+import {
   AlertTriangle,
   CheckCircle2,
   CreditCard,
   DollarSign,
-  Download,
   Eye,
+  Gift,
   Search,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import {
-  useConcessions,
-  useInvoices,
-  usePayInvoice,
-} from "../hooks/useQueries";
-import type { Invoice } from "../lib/mockData";
 
-type FilterTab = "all" | "paid" | "pending" | "overdue";
+type StatusFilter = "all" | "paid" | "unpaid" | "overdue" | "partial";
+type PaymentMethod = "cash" | "cheque" | "online";
 
 const STATUS_META: Record<
-  Invoice["status"],
+  string,
   { label: string; badge: string; dot: string }
 > = {
   paid: {
     label: "Paid",
-    badge:
-      "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700",
+    badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
     dot: "bg-emerald-500",
   },
   pending: {
     label: "Pending",
-    badge:
-      "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700",
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
     dot: "bg-amber-500",
+  },
+  unpaid: {
+    label: "Unpaid",
+    badge: "bg-orange-50 text-orange-700 border-orange-200",
+    dot: "bg-orange-500",
   },
   overdue: {
     label: "Overdue",
-    badge:
-      "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-700",
+    badge: "bg-red-50 text-red-700 border-red-200",
     dot: "bg-red-500",
+  },
+  partial: {
+    label: "Partial",
+    badge: "bg-blue-50 text-blue-700 border-blue-200",
+    dot: "bg-blue-500",
   },
 };
 
-const CLASS_OPTIONS = ["All", "6", "7", "8", "9", "10", "11", "12"];
+const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "Cash" },
+  { value: "cheque", label: "Cheque" },
+  { value: "online", label: "Online Transfer" },
+];
 
 export default function FeesPage() {
-  const [invoiceFilter, setInvoiceFilter] = useState<FilterTab>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [classFilter, setClassFilter] = useState("All");
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [recordDialogOpen, setRecordDialogOpen] = useState(false);
-  const [payDialogOpen, setPayDialogOpen] = useState(false);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [page, setPage] = useState(1);
+
+  // Record payment form state
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [recordStudentId, setRecordStudentId] = useState("");
+  const [recordAmount, setRecordAmount] = useState("");
+  const [recordDate, setRecordDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
+  const [recordMethod, setRecordMethod] = useState<PaymentMethod>("cash");
+
+  // View invoice dialog
   const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null);
-  const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvv, setCvv] = useState("");
-  const [localPaidIds, setLocalPaidIds] = useState<Set<string>>(new Set());
-  const [localPaidDates, setLocalPaidDates] = useState<Record<string, string>>(
-    {},
-  );
 
-  const invoicesQuery = useInvoices({ status: invoiceFilter, limit: 50 });
-  const concessionsQuery = useConcessions();
-  const payMutation = usePayInvoice();
+  const feesQuery = useFees({ page, limit: 20, search });
+  const concessionsQuery = useFeeConcessions();
+  const payMutation = useFeePayment();
 
-  useEffect(() => {
-    if (invoicesQuery.error)
-      toast.error(
-        `Failed to load invoices: ${(invoicesQuery.error as Error).message}`,
-      );
-  }, [invoicesQuery.error]);
+  const allInvoices = feesQuery.data?.data ?? [];
+  const totalInvoices = feesQuery.data?.total ?? 0;
 
-  const allInvoices = invoicesQuery.data?.data ?? [];
+  // Filter client-side by status (status filter may also be passed to API via search params in future)
+  const filtered =
+    statusFilter === "all"
+      ? allInvoices
+      : allInvoices.filter((inv) => inv.status === statusFilter);
 
-  const invoices = allInvoices.map((inv) =>
-    localPaidIds.has(inv.id)
-      ? {
-          ...inv,
-          status: "paid" as const,
-          paidDate: localPaidDates[inv.id] ?? null,
-        }
-      : inv,
-  );
-
-  const byStatus =
-    invoiceFilter === "all"
-      ? invoices
-      : invoices.filter((inv) => inv.status === invoiceFilter);
-
-  const filtered = byStatus.filter((inv) => {
-    const matchSearch =
-      !search ||
-      inv.studentName.toLowerCase().includes(search.toLowerCase()) ||
-      inv.id.toLowerCase().includes(search.toLowerCase());
-    const matchClass =
-      classFilter === "All" || inv.grade?.includes(classFilter);
-    return matchSearch && matchClass;
-  });
-
-  const totalBilled = invoices.reduce((s, i) => s + i.amount, 0);
-  const totalCollected = invoices
+  // Summary stats — all derived from API response, no hardcoded numbers
+  const totalBilled = allInvoices.reduce((s, i) => s + (i.amount ?? 0), 0);
+  const totalCollected = allInvoices
     .filter((i) => i.status === "paid")
-    .reduce((s, i) => s + i.amount, 0);
-  const outstanding = invoices
+    .reduce((s, i) => s + (i.amount ?? 0), 0);
+  const outstanding = allInvoices
     .filter((i) => i.status !== "paid")
-    .reduce((s, i) => s + i.amount, 0);
-  const overdueCount = invoices.filter((i) => i.status === "overdue").length;
+    .reduce((s, i) => s + (i.amount ?? 0), 0);
+  const overdueAmt = allInvoices
+    .filter((i) => i.status === "overdue")
+    .reduce((s, i) => s + (i.amount ?? 0), 0);
+  const overdueCount = allInvoices.filter((i) => i.status === "overdue").length;
   const collectionRate =
     totalBilled > 0 ? Math.round((totalCollected / totalBilled) * 100) : 0;
 
-  function openRecordDialog(invoice: Invoice) {
-    setSelectedInvoice(invoice);
-    setRecordDialogOpen(true);
-  }
-
-  function openViewDialog(invoice: Invoice) {
-    setViewInvoice(invoice);
-    setViewDialogOpen(true);
-  }
-
-  async function confirmPayment() {
-    if (!selectedInvoice) return;
-    try {
-      await payMutation.mutateAsync({
-        id: selectedInvoice.id,
-        payload: {
-          amount: selectedInvoice.amount,
-          method: "cash",
-          transactionId: "",
-        },
-      });
-      const today = new Date().toISOString().split("T")[0];
-      setLocalPaidIds((prev) => new Set(prev).add(selectedInvoice.id));
-      setLocalPaidDates((prev) => ({ ...prev, [selectedInvoice.id]: today }));
-      toast.success(`Payment recorded for ${selectedInvoice.studentName}`, {
-        description: `$${selectedInvoice.amount.toLocaleString()} – ${selectedInvoice.description}`,
-      });
-      setRecordDialogOpen(false);
-      setSelectedInvoice(null);
-    } catch (e) {
-      toast.error(`Payment failed: ${(e as Error).message}`);
-    }
-  }
-
-  function openPayNow(invoice: Invoice) {
-    setPayInvoice(invoice);
-    setPayDialogOpen(true);
-  }
-
-  async function handleOnlinePayment() {
-    if (!payInvoice) return;
-    if (!cardNumber.trim() || !expiry.trim() || !cvv.trim()) {
-      toast.error("Please fill in all card details");
-      return;
-    }
-    try {
-      await payMutation.mutateAsync({
-        id: payInvoice.id,
-        payload: {
-          amount: payInvoice.amount,
-          method: "online",
-          transactionId: `TXN-${Date.now()}`,
-        },
-      });
-      const today = new Date().toISOString().split("T")[0];
-      setLocalPaidIds((prev) => new Set(prev).add(payInvoice.id));
-      setLocalPaidDates((prev) => ({ ...prev, [payInvoice.id]: today }));
-      toast.success(
-        `Online payment of $${payInvoice.amount.toLocaleString()} processed successfully`,
-      );
-      setPayDialogOpen(false);
-      setPayInvoice(null);
-      setCardNumber("");
-      setExpiry("");
-      setCvv("");
-    } catch (e) {
-      toast.error(`Payment failed: ${(e as Error).message}`);
-    }
-  }
+  const fmtAmt = (n: number) => `₦${n.toLocaleString()}`;
 
   const statCards = [
     {
       label: "Total Collected",
-      value: `$${totalCollected.toLocaleString()}`,
+      value: feesQuery.isLoading ? null : fmtAmt(totalCollected),
       sub: `${collectionRate}% collection rate`,
       icon: TrendingUp,
-      iconBg: "bg-emerald-100 dark:bg-emerald-900/40",
-      iconColor: "text-emerald-600 dark:text-emerald-400",
+      iconBg: "bg-emerald-100",
+      iconColor: "text-emerald-600",
       accent: "border-l-emerald-500",
       barColor: "bg-emerald-500",
-      barWidth: `${collectionRate}%`,
+      barPct: collectionRate,
       ocid: "fees.collected.card",
     },
     {
       label: "Outstanding",
-      value: `$${outstanding.toLocaleString()}`,
-      sub: `${invoices.filter((i) => i.status === "pending").length} invoices pending`,
+      value: feesQuery.isLoading ? null : fmtAmt(outstanding),
+      sub: `${allInvoices.filter((i) => i.status === "pending" || i.status === "unpaid").length} invoices pending`,
       icon: DollarSign,
-      iconBg: "bg-amber-100 dark:bg-amber-900/40",
-      iconColor: "text-amber-600 dark:text-amber-400",
+      iconBg: "bg-amber-100",
+      iconColor: "text-amber-600",
       accent: "border-l-amber-500",
       barColor: "bg-amber-500",
-      barWidth:
-        totalBilled > 0
-          ? `${Math.round((outstanding / totalBilled) * 100)}%`
-          : "0%",
+      barPct:
+        totalBilled > 0 ? Math.round((outstanding / totalBilled) * 100) : 0,
       ocid: "fees.outstanding.card",
     },
     {
       label: "Overdue Amount",
-      value: `$${invoices
-        .filter((i) => i.status === "overdue")
-        .reduce((s, i) => s + i.amount, 0)
-        .toLocaleString()}`,
+      value: feesQuery.isLoading ? null : fmtAmt(overdueAmt),
       sub: `${overdueCount} overdue invoices`,
       icon: AlertTriangle,
-      iconBg: "bg-red-100 dark:bg-red-900/40",
-      iconColor: "text-red-600 dark:text-red-400",
+      iconBg: "bg-red-100",
+      iconColor: "text-red-600",
       accent: "border-l-red-500",
       barColor: "bg-red-500",
-      barWidth:
-        totalBilled > 0
-          ? `${Math.round((invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + i.amount, 0) / totalBilled) * 100)}%`
-          : "0%",
+      barPct:
+        totalBilled > 0 ? Math.round((overdueAmt / totalBilled) * 100) : 0,
       ocid: "fees.overdue.card",
     },
     {
       label: "Total Billed",
-      value: `$${totalBilled.toLocaleString()}`,
-      sub: `${invoices.length} total invoices`,
+      value: feesQuery.isLoading ? null : fmtAmt(totalBilled),
+      sub: `${totalInvoices || allInvoices.length} total invoices`,
       icon: TrendingDown,
-      iconBg: "bg-blue-100 dark:bg-blue-900/40",
-      iconColor: "text-blue-600 dark:text-blue-400",
+      iconBg: "bg-blue-100",
+      iconColor: "text-blue-600",
       accent: "border-l-blue-500",
       barColor: "bg-blue-500",
-      barWidth: "100%",
+      barPct: 100,
       ocid: "fees.total_billed.card",
     },
   ];
+
+  async function handleRecordPayment() {
+    if (!recordStudentId.trim()) {
+      toast.error("Student ID is required");
+      return;
+    }
+    if (!recordAmount || Number(recordAmount) <= 0) {
+      toast.error("Enter a valid amount");
+      return;
+    }
+    try {
+      await payMutation.mutateAsync({
+        StudentId: recordStudentId,
+        Amount: Number(recordAmount),
+        PaymentDate: recordDate,
+        PaymentMethod: recordMethod,
+      });
+      toast.success("Payment recorded successfully");
+      setRecordOpen(false);
+      setRecordStudentId("");
+      setRecordAmount("");
+      setRecordDate(new Date().toISOString().split("T")[0]);
+      setRecordMethod("cash");
+    } catch (e) {
+      toast.error(`Payment failed: ${(e as Error).message}`);
+    }
+  }
 
   return (
     <motion.div
@@ -291,18 +232,16 @@ export default function FeesPage() {
           </p>
         </div>
         <Button
-          variant="outline"
-          size="sm"
           className="gap-2 self-start sm:self-auto"
-          onClick={() => toast.success("Exporting fee records…")}
-          data-ocid="fees.export.button"
+          style={{ background: "var(--color-primary)" }}
+          onClick={() => setRecordOpen(true)}
+          data-ocid="fees.record_payment.open_modal_button"
         >
-          <Download className="w-4 h-4" />
-          Export
+          <CreditCard className="w-4 h-4" /> Record Payment
         </Button>
       </div>
 
-      {/* Premium Stat Cards */}
+      {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {statCards.map((card, i) => (
           <motion.div
@@ -313,7 +252,6 @@ export default function FeesPage() {
             className={`card-premium bg-card rounded-2xl border border-border shadow-card p-5 border-l-4 ${card.accent} relative overflow-hidden`}
             data-ocid={card.ocid}
           >
-            {/* Background decoration */}
             <div className="absolute inset-0 bg-gradient-to-br from-transparent to-muted/10 pointer-events-none" />
             <div className="relative">
               <div className="flex items-start justify-between mb-3">
@@ -321,7 +259,7 @@ export default function FeesPage() {
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     {card.label}
                   </p>
-                  {invoicesQuery.isLoading ? (
+                  {card.value == null ? (
                     <Skeleton className="h-8 w-28 mt-1.5" />
                   ) : (
                     <p className="text-2xl font-bold text-foreground mt-1 font-display">
@@ -336,11 +274,10 @@ export default function FeesPage() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mb-2">{card.sub}</p>
-              {/* Progress bar */}
               <div className="h-1 bg-muted rounded-full overflow-hidden">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: card.barWidth }}
+                  animate={{ width: `${card.barPct}%` }}
                   transition={{
                     delay: 0.3 + 0.07 * i,
                     duration: 0.7,
@@ -360,7 +297,7 @@ export default function FeesPage() {
           <TabsTrigger value="concessions">Concessions</TabsTrigger>
         </TabsList>
 
-        {/* Invoices Tab */}
+        {/* ─── Invoices Tab ─────────────────────────────────────────────────── */}
         <TabsContent value="invoices" className="mt-5">
           <motion.div
             initial={{ opacity: 0 }}
@@ -371,74 +308,77 @@ export default function FeesPage() {
             {/* Toolbar */}
             <div className="p-4 border-b border-border bg-muted/20">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                {/* Search */}
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                   <Input
                     className="pl-9 h-9 input-premium bg-background"
                     placeholder="Search student or invoice…"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setPage(1);
+                    }}
                     data-ocid="fees.search.input"
                   />
                 </div>
-                {/* Class filter */}
-                <Select value={classFilter} onValueChange={setClassFilter}>
-                  <SelectTrigger
-                    className="w-32 h-9 bg-background"
-                    data-ocid="fees.class.select"
-                  >
-                    <SelectValue placeholder="Class" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CLASS_OPTIONS.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c === "All" ? "All Classes" : `Class ${c}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {/* Status filter tabs */}
                 <div className="flex items-center gap-1 ml-auto">
-                  {(["all", "paid", "pending", "overdue"] as FilterTab[]).map(
-                    (tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setInvoiceFilter(tab)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all duration-150 ${
-                          invoiceFilter === tab
-                            ? "bg-primary text-primary-foreground shadow-card"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        }`}
-                        data-ocid={`fees.filter.${tab}.tab`}
-                      >
-                        {tab}
-                      </button>
-                    ),
-                  )}
+                  {(
+                    [
+                      "all",
+                      "paid",
+                      "unpaid",
+                      "overdue",
+                      "partial",
+                    ] as StatusFilter[]
+                  ).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => {
+                        setStatusFilter(tab);
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all duration-150 ${
+                        statusFilter === tab
+                          ? "bg-primary text-primary-foreground shadow-card"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                      data-ocid={`fees.filter.${tab}.tab`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Table */}
-            {invoicesQuery.isLoading ? (
+            {/* Table / States */}
+            {feesQuery.isLoading ? (
               <div className="p-5 space-y-3" data-ocid="fees.loading_state">
-                {(["r1", "r2", "r3", "r4", "r5", "r6"] as const).map((k) => (
+                {["r1", "r2", "r3", "r4", "r5"].map((k) => (
                   <div key={k} className="flex gap-4 items-center">
                     <Skeleton className="h-4 w-16 rounded" />
                     <Skeleton className="h-4 w-32 rounded" />
                     <Skeleton className="h-4 w-20 rounded flex-1" />
                     <Skeleton className="h-4 w-20 rounded" />
-                    <Skeleton className="h-4 w-24 rounded" />
                     <Skeleton className="h-6 w-16 rounded-full" />
-                    <Skeleton className="h-7 w-20 rounded" />
                   </div>
                 ))}
               </div>
+            ) : feesQuery.error ? (
+              <div
+                className="py-16 text-center text-muted-foreground"
+                data-ocid="fees.error_state"
+              >
+                <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p className="font-semibold">Failed to load invoices</p>
+                <p className="text-sm mt-1">
+                  {(feesQuery.error as Error).message}
+                </p>
+              </div>
             ) : filtered.length === 0 ? (
               <div
-                className="text-center py-20 text-muted-foreground"
+                className="py-20 text-center text-muted-foreground"
                 data-ocid="fees.empty_state"
               >
                 <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/40 flex items-center justify-center mb-4">
@@ -446,7 +386,9 @@ export default function FeesPage() {
                 </div>
                 <p className="font-semibold text-base">No invoices found</p>
                 <p className="text-sm mt-1 opacity-70">
-                  Try adjusting your search or filter criteria
+                  {search
+                    ? "Try adjusting your search"
+                    : "No fee invoices have been created yet"}
                 </p>
               </div>
             ) : (
@@ -455,7 +397,7 @@ export default function FeesPage() {
                   <TableHeader>
                     <TableRow className="bg-muted/30 hover:bg-muted/30">
                       <TableHead className="font-bold text-xs uppercase tracking-wider text-muted-foreground py-3">
-                        Invoice ID
+                        Invoice #
                       </TableHead>
                       <TableHead className="font-bold text-xs uppercase tracking-wider text-muted-foreground py-3">
                         Student
@@ -482,7 +424,8 @@ export default function FeesPage() {
                   </TableHeader>
                   <TableBody>
                     {filtered.map((inv, i) => {
-                      const meta = STATUS_META[inv.status];
+                      const meta =
+                        STATUS_META[inv.status] ?? STATUS_META.pending;
                       return (
                         <TableRow
                           key={inv.id}
@@ -496,27 +439,27 @@ export default function FeesPage() {
                             <div className="flex items-center gap-2.5">
                               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                                 <span className="text-xs font-bold text-primary">
-                                  {inv.studentName.charAt(0)}
+                                  {inv.studentName?.charAt(0) ?? "?"}
                                 </span>
                               </div>
                               <span className="font-semibold text-sm text-foreground">
-                                {inv.studentName}
+                                {inv.studentName ?? "-"}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell className="hidden md:table-cell text-sm text-muted-foreground py-3.5">
-                            {inv.grade}
+                            {inv.grade ?? "-"}
                           </TableCell>
                           <TableCell className="hidden lg:table-cell text-sm text-muted-foreground py-3.5">
-                            {inv.description}
+                            {inv.description ?? "-"}
                           </TableCell>
                           <TableCell className="py-3.5 text-right">
                             <span className="font-bold text-foreground">
-                              ${inv.amount.toLocaleString()}
+                              {inv.amount != null ? fmtAmt(inv.amount) : "-"}
                             </span>
                           </TableCell>
                           <TableCell className="hidden sm:table-cell text-sm text-muted-foreground py-3.5">
-                            {inv.dueDate}
+                            {inv.dueDate ?? "-"}
                           </TableCell>
                           <TableCell className="py-3.5">
                             <span
@@ -534,47 +477,11 @@ export default function FeesPage() {
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 w-7 p-0 hover:bg-primary/10 hover:text-primary"
-                                onClick={() => openViewDialog(inv)}
+                                onClick={() => setViewInvoice(inv)}
                                 data-ocid={`fees.view.${i + 1}.open_modal_button`}
                               >
                                 <Eye className="w-3.5 h-3.5" />
                               </Button>
-                              {inv.status === "paid" ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 w-7 p-0 hover:bg-emerald-50 hover:text-emerald-600"
-                                  onClick={() =>
-                                    toast.success(
-                                      `Receipt downloaded for ${inv.studentName}`,
-                                    )
-                                  }
-                                  data-ocid={`fees.receipt.${i + 1}.button`}
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </Button>
-                              ) : (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-xs h-7 px-3 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-colors"
-                                    onClick={() => openPayNow(inv)}
-                                    data-ocid={`fees.pay_now.${i + 1}.open_modal_button`}
-                                  >
-                                    Pay Now
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="text-xs h-7 px-3 hover:bg-muted"
-                                    onClick={() => openRecordDialog(inv)}
-                                    data-ocid={`fees.record.${i + 1}.open_modal_button`}
-                                  >
-                                    Record
-                                  </Button>
-                                </>
-                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -585,8 +492,8 @@ export default function FeesPage() {
               </div>
             )}
 
-            {/* Footer */}
-            {!invoicesQuery.isLoading && filtered.length > 0 && (
+            {/* Footer / Pagination */}
+            {!feesQuery.isLoading && filtered.length > 0 && (
               <div className="px-5 py-3 border-t border-border bg-muted/10 flex items-center justify-between">
                 <p className="text-xs text-muted-foreground">
                   Showing{" "}
@@ -595,25 +502,41 @@ export default function FeesPage() {
                   </span>{" "}
                   of{" "}
                   <span className="font-semibold text-foreground">
-                    {invoices.length}
+                    {totalInvoices || allInvoices.length}
                   </span>{" "}
                   invoices
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Total:{" "}
-                  <span className="font-bold text-foreground">
-                    $
-                    {filtered
-                      .reduce((s, i) => s + i.amount, 0)
-                      .toLocaleString()}
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                    className="h-7 px-3 text-xs"
+                    data-ocid="fees.pagination_prev"
+                  >
+                    Prev
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {page}
                   </span>
-                </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={allInvoices.length < 20}
+                    onClick={() => setPage((p) => p + 1)}
+                    className="h-7 px-3 text-xs"
+                    data-ocid="fees.pagination_next"
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             )}
           </motion.div>
         </TabsContent>
 
-        {/* Concessions Tab */}
+        {/* ─── Concessions Tab ──────────────────────────────────────────────── */}
         <TabsContent value="concessions" className="mt-5">
           <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
             <div className="p-5 border-b border-border bg-muted/20">
@@ -624,14 +547,38 @@ export default function FeesPage() {
                 Approved concessions and scholarship records
               </p>
             </div>
+
             {concessionsQuery.isLoading ? (
               <div className="p-5 space-y-3">
-                {(["c1", "c2", "c3", "c4"] as const).map((k) => (
+                {["c1", "c2", "c3"].map((k) => (
                   <div key={k} className="flex gap-4">
                     <Skeleton className="h-6 w-32 rounded-full" />
                     <Skeleton className="h-4 w-20" />
                   </div>
                 ))}
+              </div>
+            ) : concessionsQuery.error ? (
+              <div
+                className="py-12 text-center text-muted-foreground"
+                data-ocid="fees.concessions.error_state"
+              >
+                <p className="font-medium">Failed to load concessions</p>
+                <p className="text-sm mt-1">
+                  {(concessionsQuery.error as Error).message}
+                </p>
+              </div>
+            ) : (concessionsQuery.data ?? []).length === 0 ? (
+              <div
+                className="py-16 text-center text-muted-foreground"
+                data-ocid="fees.concessions.empty_state"
+              >
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-muted/40 flex items-center justify-center mb-3">
+                  <Gift className="w-7 h-7 opacity-30" />
+                </div>
+                <p className="font-semibold">No concessions found</p>
+                <p className="text-sm mt-1 opacity-70">
+                  Fee concessions and scholarships will appear here
+                </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -639,33 +586,52 @@ export default function FeesPage() {
                   <TableHeader>
                     <TableRow className="bg-muted/30 hover:bg-muted/30">
                       <TableHead className="font-bold text-xs uppercase tracking-wider text-muted-foreground">
-                        Type
+                        Student Name
                       </TableHead>
                       <TableHead className="font-bold text-xs uppercase tracking-wider text-muted-foreground">
-                        Percentage
+                        Concession Type
+                      </TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-muted-foreground text-right">
+                        Amount / %
                       </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(concessionsQuery.data ?? []).map((c, i) => (
-                      <TableRow
-                        key={c.id}
-                        className="table-row-hover stagger-item"
-                        data-ocid={`fees.concession.item.${i + 1}`}
-                      >
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className="badge-premium bg-primary/10 text-primary border-primary/30"
-                          >
-                            {c.name}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-bold text-foreground">
-                          {c.percentage}%
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {(concessionsQuery.data ?? []).map((c, i) => {
+                      const raw = c as unknown as Record<string, unknown>;
+                      const studentName =
+                        (raw.studentName as string | undefined) ??
+                        (raw.StudentName as string | undefined) ??
+                        "-";
+                      const amount =
+                        (raw.amount as number | undefined) ??
+                        (raw.Amount as number | undefined);
+                      const pct =
+                        (raw.percentage as number | undefined) ?? c.percentage;
+                      return (
+                        <TableRow
+                          key={c.id}
+                          className="table-row-hover stagger-item"
+                          data-ocid={`fees.concession.item.${i + 1}`}
+                        >
+                          <TableCell className="text-sm font-medium">
+                            {studentName}
+                          </TableCell>
+                          <TableCell>
+                            <span className="badge-premium bg-primary/10 text-primary border-primary/30">
+                              {c.name}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-foreground">
+                            {amount != null
+                              ? fmtAmt(amount)
+                              : pct != null
+                                ? `${pct}%`
+                                : "-"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -674,8 +640,107 @@ export default function FeesPage() {
         </TabsContent>
       </Tabs>
 
-      {/* View Invoice Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+      {/* ─── Record Payment Dialog ─────────────────────────────────────────── */}
+      <Dialog open={recordOpen} onOpenChange={setRecordOpen}>
+        <DialogContent
+          className="glass-elevated rounded-2xl max-w-md"
+          data-ocid="fees.record_payment.dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">Record Payment</DialogTitle>
+            <DialogDescription>
+              Enter the payment details to record a fee collection.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Student ID *
+              </Label>
+              <Input
+                value={recordStudentId}
+                onChange={(e) => setRecordStudentId(e.target.value)}
+                placeholder="Enter student ID or enrollment number"
+                className="input-premium"
+                data-ocid="fees.student_id.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Amount *
+              </Label>
+              <Input
+                type="number"
+                min="1"
+                value={recordAmount}
+                onChange={(e) => setRecordAmount(e.target.value)}
+                placeholder="Enter amount"
+                className="input-premium"
+                data-ocid="fees.amount.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Payment Date
+              </Label>
+              <Input
+                type="date"
+                value={recordDate}
+                onChange={(e) => setRecordDate(e.target.value)}
+                className="input-premium"
+                data-ocid="fees.payment_date.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Payment Method
+              </Label>
+              <Select
+                value={recordMethod}
+                onValueChange={(v) => setRecordMethod(v as PaymentMethod)}
+              >
+                <SelectTrigger
+                  className="input-premium"
+                  data-ocid="fees.payment_method.select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRecordOpen(false)}
+              data-ocid="fees.record_payment.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRecordPayment}
+              disabled={payMutation.isPending}
+              style={{ background: "var(--color-primary)" }}
+              data-ocid="fees.record_payment.confirm_button"
+            >
+              <CheckCircle2 className="w-4 h-4 mr-2" />
+              {payMutation.isPending ? "Processing…" : "Record Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── View Invoice Dialog ───────────────────────────────────────────── */}
+      <Dialog
+        open={!!viewInvoice}
+        onOpenChange={(o) => !o && setViewInvoice(null)}
+      >
         <DialogContent
           className="max-w-md glass-elevated"
           data-ocid="fees.view_invoice.dialog"
@@ -695,16 +760,19 @@ export default function FeesPage() {
                       Student
                     </p>
                     <p className="font-semibold text-foreground mt-0.5">
-                      {viewInvoice.studentName}
+                      {viewInvoice.studentName ?? "-"}
                     </p>
                   </div>
                   <span
-                    className={`badge-premium ${STATUS_META[viewInvoice.status].badge}`}
+                    className={`badge-premium ${(STATUS_META[viewInvoice.status] ?? STATUS_META.pending).badge}`}
                   >
                     <span
-                      className={`w-1.5 h-1.5 rounded-full mr-1.5 ${STATUS_META[viewInvoice.status].dot}`}
+                      className={`w-1.5 h-1.5 rounded-full mr-1.5 ${(STATUS_META[viewInvoice.status] ?? STATUS_META.pending).dot}`}
                     />
-                    {STATUS_META[viewInvoice.status].label}
+                    {
+                      (STATUS_META[viewInvoice.status] ?? STATUS_META.pending)
+                        .label
+                    }
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/60">
@@ -713,7 +781,7 @@ export default function FeesPage() {
                       Class
                     </p>
                     <p className="text-sm font-medium mt-0.5">
-                      {viewInvoice.grade}
+                      {viewInvoice.grade ?? "-"}
                     </p>
                   </div>
                   <div>
@@ -721,7 +789,7 @@ export default function FeesPage() {
                       Due Date
                     </p>
                     <p className="text-sm font-medium mt-0.5">
-                      {viewInvoice.dueDate}
+                      {viewInvoice.dueDate ?? "-"}
                     </p>
                   </div>
                   <div>
@@ -729,7 +797,7 @@ export default function FeesPage() {
                       Fee Type
                     </p>
                     <p className="text-sm font-medium mt-0.5">
-                      {viewInvoice.description}
+                      {viewInvoice.description ?? "-"}
                     </p>
                   </div>
                   {viewInvoice.paidDate && (
@@ -747,7 +815,9 @@ export default function FeesPage() {
               <div className="flex items-center justify-between rounded-xl bg-primary/5 border border-primary/20 p-4">
                 <p className="font-semibold text-foreground">Total Amount</p>
                 <p className="text-2xl font-bold text-primary font-display">
-                  ${viewInvoice.amount.toLocaleString()}
+                  {viewInvoice.amount != null
+                    ? fmtAmt(viewInvoice.amount)
+                    : "-"}
                 </p>
               </div>
             </div>
@@ -755,173 +825,10 @@ export default function FeesPage() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setViewDialogOpen(false)}
+              onClick={() => setViewInvoice(null)}
               data-ocid="fees.view_invoice.close_button"
             >
               Close
-            </Button>
-            {viewInvoice && viewInvoice.status !== "paid" && (
-              <Button
-                onClick={() => {
-                  setViewDialogOpen(false);
-                  openPayNow(viewInvoice);
-                }}
-                data-ocid="fees.view_invoice.pay_button"
-              >
-                <CreditCard className="w-4 h-4 mr-2" />
-                Pay Now
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Record Payment Dialog */}
-      <Dialog open={recordDialogOpen} onOpenChange={setRecordDialogOpen}>
-        <DialogContent
-          className="glass-elevated"
-          data-ocid="fees.record_payment.dialog"
-        >
-          <DialogHeader>
-            <DialogTitle className="font-display">Record Payment</DialogTitle>
-            <DialogDescription>
-              Confirm cash payment details for this invoice.
-            </DialogDescription>
-          </DialogHeader>
-          {selectedInvoice && (
-            <div className="space-y-4 py-2">
-              <div className="rounded-xl bg-muted/30 p-4 space-y-2.5">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Student</span>
-                  <span className="font-semibold">
-                    {selectedInvoice.studentName}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Description</span>
-                  <span className="font-medium">
-                    {selectedInvoice.description}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm border-t border-border/60 pt-2">
-                  <span className="text-muted-foreground font-semibold">
-                    Amount
-                  </span>
-                  <span className="text-lg font-bold text-primary font-display">
-                    ${selectedInvoice.amount.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Payment Method
-                </Label>
-                <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm font-medium">
-                  Cash Payment
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setRecordDialogOpen(false)}
-              data-ocid="fees.record_payment.cancel_button"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={confirmPayment}
-              disabled={payMutation.isPending}
-              className="btn-school-primary"
-              data-ocid="fees.record_payment.confirm_button"
-            >
-              <CheckCircle2 className="w-4 h-4 mr-2" />
-              {payMutation.isPending ? "Processing…" : "Confirm Payment"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Online Payment Gateway Dialog */}
-      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
-        <DialogContent
-          className="glass-elevated"
-          data-ocid="fees.pay_now.dialog"
-        >
-          <DialogHeader>
-            <DialogTitle className="font-display">Online Payment</DialogTitle>
-            <DialogDescription>
-              {payInvoice &&
-                `Pay $${payInvoice.amount.toLocaleString()} for ${payInvoice.studentName}`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            {payInvoice && (
-              <div className="rounded-xl bg-primary/5 border border-primary/20 p-3 flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">Invoice Total</p>
-                <p className="text-xl font-bold text-primary font-display">
-                  ${payInvoice.amount.toLocaleString()}
-                </p>
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Card Number
-              </Label>
-              <Input
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="1234 5678 9012 3456"
-                maxLength={19}
-                className="input-premium"
-                data-ocid="fees.card_number.input"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Expiry
-                </Label>
-                <Input
-                  value={expiry}
-                  onChange={(e) => setExpiry(e.target.value)}
-                  placeholder="MM/YY"
-                  className="input-premium"
-                  data-ocid="fees.expiry.input"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  CVV
-                </Label>
-                <Input
-                  value={cvv}
-                  onChange={(e) => setCvv(e.target.value)}
-                  placeholder="123"
-                  maxLength={4}
-                  className="input-premium"
-                  data-ocid="fees.cvv.input"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setPayDialogOpen(false)}
-              data-ocid="fees.pay_now.cancel_button"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleOnlinePayment}
-              disabled={payMutation.isPending}
-              className="btn-school-primary"
-              data-ocid="fees.pay_now.confirm_button"
-            >
-              <CreditCard className="w-4 h-4 mr-2" />
-              {payMutation.isPending ? "Processing…" : "Pay Now"}
             </Button>
           </DialogFooter>
         </DialogContent>

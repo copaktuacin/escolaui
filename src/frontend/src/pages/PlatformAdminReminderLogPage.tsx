@@ -1,58 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type ReminderLog, adminGetReminderLog } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_LOG: ReminderLog[] = [
-  {
-    id: 1,
-    sentAt: "2026-04-15T10:30:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Your subscription payment is overdue. Please settle the outstanding amount to avoid service interruption. Thank you, EscolaUI Platform Team.",
-    recipients: [{ tenantId: 3, schoolName: "Lakewood International" }],
-    sentCount: 1,
-    status: "Delivered",
-  },
-  {
-    id: 2,
-    sentAt: "2026-04-10T09:00:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Reminder: Your subscription renewal is due in 15 days. Please ensure your payment details are up to date to avoid service interruption.",
-    recipients: [
-      { tenantId: 2, schoolName: "Riverside Public School" },
-      { tenantId: 5, schoolName: "Westbrook High School" },
-    ],
-    sentCount: 2,
-    status: "Delivered",
-  },
-  {
-    id: 3,
-    sentAt: "2026-04-05T14:00:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Final notice: Your account has an outstanding payment. Continued non-payment may result in account suspension. Please act immediately.",
-    recipients: [{ tenantId: 3, schoolName: "Lakewood International" }],
-    sentCount: 1,
-    status: "Partial",
-  },
-  {
-    id: 4,
-    sentAt: "2026-03-28T11:15:00Z",
-    sentBy: "Platform Admin",
-    message:
-      "Monthly subscription renewal reminder for all tenants. Please ensure your payment method is valid.",
-    recipients: [
-      { tenantId: 1, schoolName: "Springfield Academy" },
-      { tenantId: 2, schoolName: "Riverside Public School" },
-      { tenantId: 4, schoolName: "Greenhill Primary" },
-    ],
-    sentCount: 3,
-    status: "Delivered",
-  },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -112,17 +59,37 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── Expandable row ───────────────────────────────────────────────────────────
+/**
+ * Normalize a raw API reminder log entry — handles PascalCase and camelCase field names.
+ */
+function normalizeReminder(raw: unknown): ReminderLog {
+  const r = raw as Record<string, unknown>;
+  const recipients = (() => {
+    const raw = (r.recipients ?? r.Recipients ?? []) as Record<
+      string,
+      unknown
+    >[];
+    return raw.map((x) => ({
+      tenantId: Number(x.tenantId ?? x.TenantId ?? x.id ?? 0),
+      schoolName: String(x.schoolName ?? x.SchoolName ?? ""),
+    }));
+  })();
+  return {
+    id: Number(r.id ?? r.Id ?? 0),
+    sentAt: String(r.sentAt ?? r.SentAt ?? ""),
+    sentBy: String(r.sentBy ?? r.SentBy ?? "Platform Admin"),
+    message: String(r.message ?? r.Message ?? ""),
+    recipients,
+    sentCount: Number(r.sentCount ?? r.SentCount ?? recipients.length),
+    status: String(r.status ?? r.Status ?? "Delivered"),
+  };
+}
 
 function ReminderRow({
   reminder,
   index,
-}: {
-  reminder: ReminderLog;
-  index: number;
-}) {
+}: { reminder: ReminderLog; index: number }) {
   const [expanded, setExpanded] = useState(false);
-
   return (
     <div
       className="border-b"
@@ -136,7 +103,6 @@ function ReminderRow({
         onClick={() => setExpanded((p) => !p)}
         aria-expanded={expanded}
       >
-        {/* Recipients */}
         <div className="flex items-center gap-2.5 min-w-0">
           <div
             className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
@@ -148,14 +114,12 @@ function ReminderRow({
             className="text-sm font-semibold truncate"
             style={{ color: "#e2e8f0" }}
           >
-            {reminder.recipients.map((r) => r.schoolName).join(", ")}
+            {reminder.recipients.map((r) => r.schoolName).join(", ") || "—"}
           </p>
         </div>
-        {/* Sent At */}
         <p className="text-xs" style={{ color: "#64748b" }}>
-          {formatDate(reminder.sentAt)}
+          {reminder.sentAt ? formatDate(reminder.sentAt) : "—"}
         </p>
-        {/* Message preview */}
         <p
           className="text-xs hidden md:block overflow-hidden"
           style={{
@@ -168,13 +132,10 @@ function ReminderRow({
           {reminder.message.slice(0, 80)}
           {reminder.message.length > 80 ? "…" : ""}
         </p>
-        {/* Sent by */}
         <p className="text-xs hidden md:block" style={{ color: "#475569" }}>
           {reminder.sentBy}
         </p>
-        {/* Status */}
         <StatusBadge status={reminder.status} />
-        {/* Expand */}
         <span
           className="text-xs flex-shrink-0 transition-transform"
           style={{
@@ -249,32 +210,25 @@ export default function PlatformAdminReminderLogPage() {
     setError(null);
     setNotAvailable(false);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 400));
-        setReminders(MOCK_LOG);
-      } else {
-        const res = await adminGetReminderLog(1, 100);
-        // Graceful 404 handling — endpoint may not be implemented yet
-        const is404 =
-          !res.success &&
-          (res.error?.includes("Not Found") || res.error?.includes("404"));
-        if (is404) {
-          setNotAvailable(true);
-          setReminders([]);
-          return;
-        }
-        if (!res.success) {
-          setError(res.error ?? "Failed to load reminder log.");
-          return;
-        }
-        const d = res.data as { data?: ReminderLog[] } | null;
-        const list = Array.isArray(d?.data)
-          ? d.data
-          : Array.isArray(res.data)
-            ? (res.data as unknown as ReminderLog[])
-            : [];
-        setReminders(list);
+      const res = await adminGetReminderLog(1, 100);
+      const is404 =
+        !res.success &&
+        (res.error?.includes("Not Found") || res.error?.includes("404"));
+      if (is404) {
+        setNotAvailable(true);
+        setReminders([]);
+        return;
       }
+      if (!res.success) {
+        setError(res.error ?? "Failed to load reminder log.");
+        return;
+      }
+      const rawList: unknown[] = Array.isArray(res.data)
+        ? (res.data as unknown[])
+        : Array.isArray((res.data as { data?: unknown[] })?.data)
+          ? (res.data as { data: unknown[] }).data
+          : [];
+      setReminders(rawList.map(normalizeReminder));
     } catch {
       setError("Failed to load reminder log. Please try again.");
     } finally {
@@ -295,9 +249,8 @@ export default function PlatformAdminReminderLogPage() {
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
       result = result.filter((r) => new Date(r.sentAt).getTime() >= cutoff);
     }
-    if (statusFilter !== "all") {
+    if (statusFilter !== "all")
       result = result.filter((r) => r.status === statusFilter);
-    }
     if (search.trim()) {
       result = result.filter((r) =>
         r.recipients.some((x) =>
@@ -313,19 +266,6 @@ export default function PlatformAdminReminderLogPage() {
   ).length;
   const partialCount = reminders.filter((r) => r.status === "Partial").length;
   const failedCount = reminders.filter((r) => r.status === "Failed").length;
-
-  const DATE_FILTERS: { label: string; value: DateFilter }[] = [
-    { label: "Last 7 days", value: "7days" },
-    { label: "Last 30 days", value: "30days" },
-    { label: "All time", value: "all" },
-  ];
-
-  const STATUS_FILTERS: { label: string; value: StatusFilter }[] = [
-    { label: `All (${reminders.length})`, value: "all" },
-    { label: `Delivered (${deliveredCount})`, value: "Delivered" },
-    { label: `Partial (${partialCount})`, value: "Partial" },
-    { label: `Failed (${failedCount})`, value: "Failed" },
-  ];
 
   return (
     <div className="space-y-7" data-ocid="reminder_log.page">
@@ -408,7 +348,7 @@ export default function PlatformAdminReminderLogPage() {
         </div>
       )}
 
-      {/* Not available banner */}
+      {/* Not available */}
       {notAvailable && !loading && (
         <div
           className="p-5 rounded-xl border text-center"
@@ -422,23 +362,27 @@ export default function PlatformAdminReminderLogPage() {
             className="text-sm font-semibold mb-1"
             style={{ color: "#a5b4fc" }}
           >
-            Reminder log not yet available
+            No reminder log available yet
           </p>
           <p className="text-xs" style={{ color: "#475569" }}>
-            This feature requires a backend update — the
+            This feature requires a backend update — the{" "}
             <code
-              className="mx-1 px-1 py-0.5 rounded"
-              style={{ background: "#1e293b", color: "#818cf8" }}
+              style={{
+                background: "#1e293b",
+                padding: "1px 4px",
+                borderRadius: "3px",
+                color: "#818cf8",
+              }}
             >
               GET /api/TenantSettings/admin/reminders
-            </code>
+            </code>{" "}
             endpoint has not been implemented yet.
           </p>
         </div>
       )}
 
       {/* Summary strip */}
-      {!loading && (
+      {!loading && reminders.length > 0 && (
         <div className="flex flex-wrap gap-3">
           {[
             {
@@ -501,7 +445,6 @@ export default function PlatformAdminReminderLogPage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
-        {/* Search */}
         <div className="relative flex-1" style={{ maxWidth: "320px" }}>
           <span
             className="absolute left-3 top-1/2 -translate-y-1/2 text-xs"
@@ -522,10 +465,12 @@ export default function PlatformAdminReminderLogPage() {
             data-ocid="reminder_log.search.input"
           />
         </div>
-
-        {/* Date filter */}
         <div className="flex gap-2 flex-wrap">
-          {DATE_FILTERS.map((f) => (
+          {[
+            { label: "Last 7 days", value: "7days" as DateFilter },
+            { label: "Last 30 days", value: "30days" as DateFilter },
+            { label: "All time", value: "all" as DateFilter },
+          ].map((f) => (
             <button
               key={f.value}
               type="button"
@@ -547,10 +492,25 @@ export default function PlatformAdminReminderLogPage() {
             </button>
           ))}
         </div>
-
-        {/* Status filter */}
         <div className="flex gap-2 flex-wrap">
-          {STATUS_FILTERS.map((f) => (
+          {[
+            {
+              label: `All (${reminders.length})`,
+              value: "all" as StatusFilter,
+            },
+            {
+              label: `Delivered (${deliveredCount})`,
+              value: "Delivered" as StatusFilter,
+            },
+            {
+              label: `Partial (${partialCount})`,
+              value: "Partial" as StatusFilter,
+            },
+            {
+              label: `Failed (${failedCount})`,
+              value: "Failed" as StatusFilter,
+            },
+          ].map((f) => (
             <button
               key={f.value}
               type="button"
@@ -582,7 +542,6 @@ export default function PlatformAdminReminderLogPage() {
         className="rounded-2xl border overflow-hidden"
         style={{ background: "#1a2234", borderColor: "#1e293b" }}
       >
-        {/* Column headers */}
         <div
           className="hidden md:grid px-5 py-3 border-b text-xs font-semibold uppercase tracking-wide"
           style={{
@@ -638,7 +597,7 @@ export default function PlatformAdminReminderLogPage() {
               className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 text-3xl"
               style={{ background: "#1e293b" }}
             >
-              📭
+              💭
             </div>
             <p className="text-base font-semibold" style={{ color: "#f1f5f9" }}>
               No reminders found

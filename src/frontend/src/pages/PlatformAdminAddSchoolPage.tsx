@@ -1,13 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import {
-  type CreateTenantPayload,
-  type Tenant,
-  adminCreateTenant,
-} from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
+import { type CreateTenantPayload, adminCreateTenant } from "../lib/api";
 
-// ─── Shared style constants ───────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const inputClass =
   "w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors focus:ring-2 focus:ring-indigo-500/40";
@@ -17,12 +12,7 @@ const inputStyle = {
   color: "#e2e8f0",
 };
 
-const PLANS: Array<"Basic" | "Standard" | "Premium"> = [
-  "Basic",
-  "Standard",
-  "Premium",
-];
-
+const PLANS = ["Basic", "Standard", "Premium"] as const;
 const PLAN_STYLES: Record<string, string> = {
   Basic: "bg-blue-900/30 text-blue-400 border-blue-700/40",
   Standard: "bg-violet-900/30 text-violet-400 border-violet-700/40",
@@ -42,14 +32,12 @@ type FormState = {
   Logo: string;
   SubscriptionPlan: string;
   PrincipalName: string;
-  PrincipalUsername: string;
+  SchoolUsername: string;
   PrincipalEmail: string;
   PrincipalPassword: string;
 };
 
 type FormErrors = Partial<Record<keyof FormState, string>>;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function FieldError({ msg }: { msg?: string }) {
   if (!msg) return null;
@@ -60,11 +48,22 @@ function FieldError({ msg }: { msg?: string }) {
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function Label({ children }: { children: React.ReactNode }) {
   return (
     <p
       className="block text-xs font-semibold uppercase tracking-wide mb-1.5"
       style={{ color: "#94a3b8" }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className="text-xs font-bold uppercase tracking-widest mb-4"
+      style={{ color: "#6366f1" }}
     >
       {children}
     </p>
@@ -87,7 +86,7 @@ export default function PlatformAdminAddSchoolPage() {
     Logo: "",
     SubscriptionPlan: "Basic",
     PrincipalName: "",
-    PrincipalUsername: "",
+    SchoolUsername: "",
     PrincipalEmail: "",
     PrincipalPassword: "",
   });
@@ -116,12 +115,12 @@ export default function PlatformAdminAddSchoolPage() {
     if (form.Motto.length > 300) e.Motto = "Max 300 characters";
     if (!form.PrincipalName.trim())
       e.PrincipalName = "Principal name is required";
-    if (!form.PrincipalUsername.trim())
-      e.PrincipalUsername = "Username is required";
-    else if (form.PrincipalUsername.length < 3)
-      e.PrincipalUsername = "Username must be at least 3 characters";
-    else if (/\s/.test(form.PrincipalUsername))
-      e.PrincipalUsername = "Username must not contain spaces";
+    if (!form.SchoolUsername.trim())
+      e.SchoolUsername = "School username is required";
+    else if (form.SchoolUsername.length < 3)
+      e.SchoolUsername = "Username must be at least 3 characters";
+    else if (/\s/.test(form.SchoolUsername))
+      e.SchoolUsername = "Username must not contain spaces";
     if (
       !form.PrincipalEmail.trim() ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.PrincipalEmail)
@@ -146,7 +145,7 @@ export default function PlatformAdminAddSchoolPage() {
       SchoolName: form.SchoolName.trim(),
       Email: form.Email.trim(),
       PrincipalName: form.PrincipalName.trim(),
-      PrincipalUsername: form.PrincipalUsername.trim(),
+      SchoolUsername: form.SchoolUsername.trim(),
       PrincipalEmail: form.PrincipalEmail.trim(),
       PrincipalPassword: form.PrincipalPassword,
       RoleId: 1,
@@ -161,21 +160,17 @@ export default function PlatformAdminAddSchoolPage() {
     if (form.SubscriptionPlan) payload.SubscriptionPlan = form.SubscriptionPlan;
 
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 700));
-        // In demo mode — navigate back with a success message encoded in the URL
-        navigate({
-          to: "/platform-admin/schools",
-          search: { created: form.SchoolName.trim() } as Record<string, string>,
-        });
-        return;
-      }
       const res = await adminCreateTenant(payload);
       if (!res.success) throw new Error(res.error ?? "Failed to create school");
-      const created = res.data as Tenant;
+      const created = res.data as {
+        schoolName?: string;
+        SchoolName?: string;
+      } | null;
+      const name =
+        created?.schoolName ?? created?.SchoolName ?? form.SchoolName.trim();
       navigate({
         to: "/platform-admin/schools",
-        search: { created: created.schoolName } as Record<string, string>,
+        search: { created: name } as Record<string, string>,
       });
     } catch (err) {
       setApiError(
@@ -188,7 +183,7 @@ export default function PlatformAdminAddSchoolPage() {
 
   return (
     <div style={{ maxWidth: "720px" }} data-ocid="add_school.page">
-      {/* Page header */}
+      {/* Back + heading */}
       <div className="flex items-center gap-4 mb-6">
         <button
           type="button"
@@ -197,7 +192,6 @@ export default function PlatformAdminAddSchoolPage() {
           style={{ borderColor: "#334155", color: "#94a3b8" }}
           data-ocid="add_school.back.button"
         >
-          {/* Left arrow */}
           <svg
             aria-hidden="true"
             width="14"
@@ -229,7 +223,6 @@ export default function PlatformAdminAddSchoolPage() {
         style={{ background: "#1a2234", borderColor: "#1e293b" }}
       >
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* API error banner */}
           {apiError && (
             <div
               className="p-3 rounded-lg text-sm border"
@@ -244,18 +237,12 @@ export default function PlatformAdminAddSchoolPage() {
             </div>
           )}
 
-          {/* ── School Information ─────────────────────────────────── */}
+          {/* ── School Information ──── */}
           <div>
-            <p
-              className="text-xs font-bold uppercase tracking-widest mb-4"
-              style={{ color: "#6366f1" }}
-            >
-              School Information
-            </p>
+            <SectionHeading>School Information</SectionHeading>
             <div className="space-y-4">
-              {/* School Name */}
               <div>
-                <SectionLabel>School Name *</SectionLabel>
+                <Label>School Name *</Label>
                 <input
                   type="text"
                   value={form.SchoolName}
@@ -271,7 +258,6 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.SchoolName} />
               </div>
 
-              {/* Acronym + Phone */}
               <div
                 style={{
                   display: "grid",
@@ -280,7 +266,7 @@ export default function PlatformAdminAddSchoolPage() {
                 }}
               >
                 <div>
-                  <SectionLabel>School Acronym</SectionLabel>
+                  <Label>School Acronym</Label>
                   <input
                     type="text"
                     value={form.SchoolAcronym}
@@ -301,17 +287,17 @@ export default function PlatformAdminAddSchoolPage() {
                       marginTop: "2px",
                     }}
                   >
-                    Max 10 characters
+                    Max 10 chars
                   </p>
                   <FieldError msg={errors.SchoolAcronym} />
                 </div>
                 <div>
-                  <SectionLabel>Phone</SectionLabel>
+                  <Label>Phone</Label>
                   <input
                     type="text"
                     value={form.Phone}
                     onChange={(e) => setField("Phone", e.target.value)}
-                    placeholder="+1 555 000 0000"
+                    placeholder="+91 9876543210"
                     maxLength={20}
                     className={inputClass}
                     style={{
@@ -324,9 +310,8 @@ export default function PlatformAdminAddSchoolPage() {
                 </div>
               </div>
 
-              {/* Admin Email */}
               <div>
-                <SectionLabel>Admin Email *</SectionLabel>
+                <Label>School Email *</Label>
                 <input
                   type="email"
                   value={form.Email}
@@ -343,9 +328,8 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.Email} />
               </div>
 
-              {/* Address */}
               <div>
-                <SectionLabel>Address</SectionLabel>
+                <Label>Address</Label>
                 <textarea
                   value={form.Address}
                   onChange={(e) => setField("Address", e.target.value)}
@@ -363,7 +347,6 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.Address} />
               </div>
 
-              {/* Website + Logo */}
               <div
                 style={{
                   display: "grid",
@@ -372,7 +355,7 @@ export default function PlatformAdminAddSchoolPage() {
                 }}
               >
                 <div>
-                  <SectionLabel>Website URL</SectionLabel>
+                  <Label>Website URL</Label>
                   <input
                     type="text"
                     value={form.Website}
@@ -389,7 +372,7 @@ export default function PlatformAdminAddSchoolPage() {
                   <FieldError msg={errors.Website} />
                 </div>
                 <div>
-                  <SectionLabel>Logo URL</SectionLabel>
+                  <Label>Logo URL</Label>
                   <input
                     type="text"
                     value={form.Logo}
@@ -407,9 +390,8 @@ export default function PlatformAdminAddSchoolPage() {
                 </div>
               </div>
 
-              {/* Motto */}
               <div>
-                <SectionLabel>School Motto</SectionLabel>
+                <Label>School Motto</Label>
                 <input
                   type="text"
                   value={form.Motto}
@@ -426,9 +408,8 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.Motto} />
               </div>
 
-              {/* Subscription Plan */}
               <div>
-                <SectionLabel>Subscription Plan</SectionLabel>
+                <Label>Subscription Plan</Label>
                 <div className="flex gap-2 flex-wrap">
                   {PLANS.map((p) => (
                     <button
@@ -450,21 +431,25 @@ export default function PlatformAdminAddSchoolPage() {
             </div>
           </div>
 
-          {/* Divider */}
           <div style={{ borderTop: "1px solid #334155", paddingTop: "4px" }} />
 
-          {/* ── Principal Details ──────────────────────────────────── */}
+          {/* ── Principal Details ──── */}
           <div>
-            <p
-              className="text-xs font-bold uppercase tracking-widest mb-4"
-              style={{ color: "#6366f1" }}
-            >
-              Principal Details
-            </p>
+            <SectionHeading>Principal Details</SectionHeading>
             <div className="space-y-4">
-              {/* Principal Name */}
               <div>
-                <SectionLabel>Principal Name *</SectionLabel>
+                <Label>
+                  Principal Name *{" "}
+                  <span
+                    style={{
+                      color: "#475569",
+                      fontWeight: 400,
+                      textTransform: "none",
+                    }}
+                  >
+                    (display name, e.g. Dr. Jane Smith)
+                  </span>
+                </Label>
                 <input
                   type="text"
                   value={form.PrincipalName}
@@ -480,25 +465,31 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.PrincipalName} />
               </div>
 
-              {/* Principal Username */}
               <div>
-                <SectionLabel>Username (for login) *</SectionLabel>
+                <Label>
+                  School Username (for login) *{" "}
+                  <span
+                    style={{
+                      color: "#475569",
+                      fontWeight: 400,
+                      textTransform: "none",
+                    }}
+                  >
+                    (different from principal name)
+                  </span>
+                </Label>
                 <input
                   type="text"
-                  value={form.PrincipalUsername}
-                  onChange={(e) =>
-                    setField("PrincipalUsername", e.target.value)
-                  }
+                  value={form.SchoolUsername}
+                  onChange={(e) => setField("SchoolUsername", e.target.value)}
                   placeholder="e.g. jsmith.principal"
                   autoComplete="off"
                   className={inputClass}
                   style={{
                     ...inputStyle,
-                    borderColor: errors.PrincipalUsername
-                      ? "#f87171"
-                      : "#334155",
+                    borderColor: errors.SchoolUsername ? "#f87171" : "#334155",
                   }}
-                  data-ocid="add_school.principal_username.input"
+                  data-ocid="add_school.school_username.input"
                 />
                 <p
                   style={{
@@ -507,15 +498,13 @@ export default function PlatformAdminAddSchoolPage() {
                     marginTop: "3px",
                   }}
                 >
-                  This is what the principal uses to sign in — must be different
-                  from their name.
+                  Login credential — no spaces, min 3 chars, must be unique.
                 </p>
-                <FieldError msg={errors.PrincipalUsername} />
+                <FieldError msg={errors.SchoolUsername} />
               </div>
 
-              {/* Principal Email */}
               <div>
-                <SectionLabel>Principal Email *</SectionLabel>
+                <Label>Principal Email *</Label>
                 <input
                   type="email"
                   value={form.PrincipalEmail}
@@ -532,9 +521,8 @@ export default function PlatformAdminAddSchoolPage() {
                 <FieldError msg={errors.PrincipalEmail} />
               </div>
 
-              {/* Principal Password */}
               <div>
-                <SectionLabel>Principal Password *</SectionLabel>
+                <Label>Principal Password *</Label>
                 <div style={{ position: "relative" }}>
                   <input
                     type={showPassword ? "text" : "password"}
@@ -667,8 +655,6 @@ export default function PlatformAdminAddSchoolPage() {
           </div>
         </form>
       </div>
-
-      {/* Spin keyframe via style tag */}
       <style>{"@keyframes spin { to { transform: rotate(360deg); } }"}</style>
     </div>
   );

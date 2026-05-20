@@ -6,8 +6,10 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { api, loginFetch, refreshTokens } from "../lib/api";
+import { api, clearTokens, loginFetch, refreshTokens } from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type UserRole =
   | "principal"
@@ -19,18 +21,21 @@ export type UserRole =
 
 type User = {
   id: string;
+  /** Display name from API — never hardcoded */
   name: string;
+  /** Login username from the form — always preserved */
+  username: string;
   email: string;
   role: UserRole;
   avatar?: string;
   /**
-   * True ONLY for the platform-level super-admin.
-   * Determined by the role field returned from the API ("Admin" or "PlatformAdmin"),
-   * NOT by email comparison.
-   * Platform admin users go to /platform-admin, NOT /dashboard.
-   * School-side users (including Principal) go to /dashboard.
+   * True ONLY when API role is "superadmin" or "platformadmin" (case-insensitive).
+   * Platform admin users go to /platform-admin.
+   * School-side users (Principal etc.) go to /dashboard.
    */
   isPlatformAdmin: boolean;
+  /** TenantId / SchoolId from login response */
+  tenantId?: string | null;
 };
 
 type AuthState = {
@@ -52,85 +57,21 @@ type AuthContextType = AuthState & {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Demo users reflecting the correct role structure:
-// - "admin" → platform admin (isPlatformAdmin: true, no school-side access)
-// - "principal" → school principal (school admin, isPlatformAdmin: false)
-const DEMO_USERS: Record<string, User> = {
-  admin: {
-    id: "usr-001",
-    name: "Dr. Sarah Evans",
-    email: "admin@escola.com",
-    role: "principal", // Placeholder role; isPlatformAdmin=true gates all access
-    isPlatformAdmin: true,
-  },
-  principal: {
-    id: "usr-002",
-    name: "Mr. David Okonkwo",
-    email: "principal@escola.com",
-    role: "principal",
-    isPlatformAdmin: false,
-  },
-  teacher: {
-    id: "usr-003",
-    name: "Mrs. Grace Okafor",
-    email: "teacher@escola.com",
-    role: "teacher",
-    isPlatformAdmin: false,
-  },
-  admissions: {
-    id: "usr-004",
-    name: "Ms. Amara Nwosu",
-    email: "admissions@escola.com",
-    role: "admission_officer",
-    isPlatformAdmin: false,
-  },
-  accounts: {
-    id: "usr-005",
-    name: "Mr. James Bello",
-    email: "accounts@escola.com",
-    role: "account_officer",
-    isPlatformAdmin: false,
-  },
-};
-
-// ---- Exact DTO shapes per API spec ----
-
-// NOTE: Login payload uses lowercase "username" (confirmed working in Postman).
-type LoginRequest = {
-  username: string;
-  password: string;
-};
-
-type AuthUserDto = {
-  id: number;
-  name: string;
-  role?: string;
-  email?: string;
-  avatar?: string;
-};
-
-type LoginResponse = {
-  accessToken: string;
-  refreshToken: string;
-  user: AuthUserDto;
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Determine if a user is the platform admin purely from the API role string.
- * ONLY "superadmin" or "platformadmin" (case-insensitive) → isPlatformAdmin = true.
- * Plain "admin", "Principal", "SchoolAdmin", or any other role → isPlatformAdmin = false.
- * School admins with role "admin" in a school context must NOT be treated as platform admin.
+ * True only for platform/super admin — case-insensitive.
+ * NEVER treat plain "admin", "principal", or school roles as platform admin.
  */
-function resolvePlatformAdmin(apiRole: string | undefined): boolean {
-  const normalized = (apiRole ?? "").toLowerCase();
-  return normalized === "superadmin" || normalized === "platformadmin";
+function resolvePlatformAdmin(role: string | undefined): boolean {
+  const r = (role ?? "").toLowerCase();
+  return r === "superadmin" || r === "platformadmin";
 }
 
-/** Normalise API role string → UserRole enum (school-side role keys only) */
+/** Normalise API role string → UserRole (school-side) */
 function normaliseRole(raw: string | undefined): UserRole {
   const map: Record<string, UserRole> = {
-    // Principal is the school admin
-    Admin: "principal", // Fallback so platform admin has a valid role shape
+    Admin: "principal",
     admin: "principal",
     SuperAdmin: "principal",
     superadmin: "principal",
@@ -152,26 +93,86 @@ function normaliseRole(raw: string | undefined): UserRole {
   return map[raw ?? ""] ?? "clerk";
 }
 
-/** Map AuthUserDto → internal User */
-function dtoToUser(dto: AuthUserDto, existingEmail?: string): User {
-  const email = dto.email ?? existingEmail ?? "";
-  const isPlatformAdmin = resolvePlatformAdmin(dto.role);
-  const role = normaliseRole(dto.role);
+/** Parse any raw API response object into a User. */
+function parseUserFromResponse(
+  raw: Record<string, unknown>,
+  loginUsername: string,
+): User {
+  // The API may return the user under .user, .User, .data, .Data, or at root
+  const userObj: Record<string, unknown> =
+    (raw.user as Record<string, unknown>) ??
+    (raw.User as Record<string, unknown>) ??
+    (raw.data as Record<string, unknown>) ??
+    (raw.Data as Record<string, unknown>) ??
+    raw;
+
+  // Extract ID
+  const id = String(
+    userObj.id ?? userObj.Id ?? userObj.userId ?? userObj.UserId ?? 0,
+  );
+
+  // Extract role
+  const rawRole = String(
+    userObj.role ?? userObj.Role ?? userObj.userRole ?? userObj.UserRole ?? "",
+  );
+
+  // Extract tenantId
+  const rawTenantId =
+    userObj.tenantId ??
+    userObj.TenantId ??
+    userObj.schoolId ??
+    userObj.SchoolId;
+  const tenantId =
+    rawTenantId !== undefined && rawTenantId !== null
+      ? String(rawTenantId)
+      : null;
+
+  // Extract display name — never hardcode; fall back to login username
+  const GENERIC = new Set(["user", "unknown", ""]);
+  const rawName = String(
+    userObj.displayName ??
+      userObj.DisplayName ??
+      userObj.fullName ??
+      userObj.FullName ??
+      userObj.name ??
+      userObj.Name ??
+      "",
+  ).trim();
+  const name = GENERIC.has(rawName.toLowerCase())
+    ? loginUsername
+    : rawName || loginUsername;
+
+  // Extract email
+  const email = String(
+    userObj.email ?? userObj.Email ?? userObj.username ?? "",
+  );
+
+  const isPlatformAdmin = resolvePlatformAdmin(rawRole);
+  const role = normaliseRole(rawRole);
+
   return {
-    id: String(dto.id),
-    name: dto.name,
+    id,
+    name,
+    username: loginUsername,
     email,
     role,
-    avatar: dto.avatar,
+    avatar: userObj.avatar as string | undefined,
     isPlatformAdmin,
+    tenantId,
   };
 }
 
-// Determine post-login redirect based on user
 function getLoginRedirect(user: User): string {
-  if (user.isPlatformAdmin) return "/platform-admin";
-  return "/dashboard";
+  return user.isPlatformAdmin ? "/platform-admin" : "/dashboard";
 }
+
+function clearStorage() {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("user");
+}
+
+// ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -182,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isLoading: true,
   });
 
+  // On mount: restore session from localStorage, validate with /auth/me
   useEffect(() => {
     async function init() {
       const accessToken = localStorage.getItem("accessToken");
@@ -197,7 +199,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userStr) {
           try {
             const parsed = JSON.parse(userStr) as User;
-            // Re-derive isPlatformAdmin in case stored value is missing/stale
             const user: User = {
               ...parsed,
               isPlatformAdmin:
@@ -207,31 +208,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setState({
               user,
               accessToken,
-              refreshToken,
+              refreshToken: refreshToken ?? null,
               isAuthenticated: true,
               isLoading: false,
             });
             return;
           } catch {
-            // fall through to clear
+            /* ignore */
           }
         }
         setState((s) => ({ ...s, isLoading: false }));
         return;
       }
 
-      // Live mode: validate token with GET /auth/me
-      // Response: AuthUserDto { id, name, role?, email?, avatar? }
+      // Live mode: validate via GET /auth/me
       try {
-        const res = await api.get<AuthUserDto>("/auth/me");
+        const res = await api.get<Record<string, unknown>>("/auth/me");
         if (res.success && res.data) {
-          const user = dtoToUser(res.data);
-          console.log(
-            "[EscolaUI] /auth/me → role:",
-            res.data.role,
-            "isPlatformAdmin:",
-            user.isPlatformAdmin,
-          );
+          // Re-parse from /auth/me to get fresh name/role
+          const storedUsername = userStr
+            ? (JSON.parse(userStr) as User).username
+            : "";
+          const user = parseUserFromResponse(res.data, storedUsername);
           localStorage.setItem("user", JSON.stringify(user));
           setState({
             user,
@@ -251,23 +249,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
       } catch {
-        // /auth/me failed (network error etc.) — fall back to localStorage user
-        // but re-derive isPlatformAdmin to guard against stale/missing flag
+        // Network failure — restore from localStorage but re-derive isPlatformAdmin
         if (userStr) {
           try {
             const parsed = JSON.parse(userStr) as User;
-            // Critical: always re-derive isPlatformAdmin from the stored role
-            // so a page reload never silently loses platform admin access
             const isPlatformAdmin =
               parsed.isPlatformAdmin === true ||
               resolvePlatformAdmin(parsed.role);
             const user: User = { ...parsed, isPlatformAdmin };
-            console.log(
-              "[EscolaUI] Restored from localStorage — isPlatformAdmin:",
-              isPlatformAdmin,
-              "role:",
-              parsed.role,
-            );
             setState({
               user,
               accessToken,
@@ -277,7 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
             return;
           } catch {
-            // fall through
+            /* ignore */
           }
         }
         setState((s) => ({ ...s, isLoading: false }));
@@ -290,10 +279,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     if (isDemoMode()) {
       await new Promise((r) => setTimeout(r, 600));
-      const demoUser = DEMO_USERS[username.toLowerCase()];
-      if (demoUser && (password === "password123" || password === "123456")) {
-        const accessToken = `demo-access-token-${Date.now()}`;
-        const refreshToken = `demo-refresh-token-${Date.now()}`;
+      // In demo mode there is no real user DB — build a minimal user from
+      // the supplied username so the UI is always fully dynamic.
+      const DEMO_ROLE_MAP: Record<string, UserRole> = {
+        admin: "principal",
+        principal: "principal",
+        teacher: "teacher",
+        admissions: "admission_officer",
+        accounts: "account_officer",
+      };
+      const isAdmin = username.toLowerCase() === "admin";
+      const role: UserRole = DEMO_ROLE_MAP[username.toLowerCase()] ?? "clerk";
+      if (password === "password123" || password === "123456") {
+        const demoUser: User = {
+          id: `demo-${username}`,
+          name: username,
+          username,
+          email: `${username}@escola.local`,
+          role,
+          isPlatformAdmin: isAdmin,
+          tenantId: isAdmin ? null : "demo-tenant",
+        };
+        const accessToken = `demo-access-${Date.now()}`;
+        const refreshToken = `demo-refresh-${Date.now()}`;
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
         localStorage.setItem("user", JSON.stringify(demoUser));
@@ -309,70 +317,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return {
         success: false,
         error:
-          "Invalid credentials. Demo accounts: admin | principal | teacher | admissions | accounts (all use password: 123456 or password123)",
+          "Invalid credentials. Demo: admin/principal/teacher/admissions/accounts with password123",
       };
     }
 
-    // Live mode — POST https://escola.doorstepgarage.in/api/auth/login
-    // Payload: { username, password } (lowercase "username" — confirmed in Postman)
-    const loginPayload: LoginRequest = { username, password };
-    try {
-      console.log(
-        "[EscolaUI] AuthContext.login() called with username:",
-        username,
-      );
-      const res = await loginFetch(username, password);
-      if (res.success && res.data) {
-        const data = res.data as LoginResponse;
-        const { accessToken, refreshToken, user: dto } = data;
-        const user = dtoToUser(dto, dto.email ?? username);
-        localStorage.setItem("accessToken", accessToken);
-        localStorage.setItem("refreshToken", refreshToken);
-        localStorage.setItem("user", JSON.stringify(user));
-        setState({
-          user,
-          accessToken,
-          refreshToken,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-        console.log(
-          "[EscolaUI] Login successful, role:",
-          user.role,
-          "isPlatformAdmin:",
-          user.isPlatformAdmin,
-        );
-        return { success: true, redirectTo: getLoginRedirect(user) };
+    // Live mode
+    const res = await loginFetch(username, password);
+    if (res.success && res.data) {
+      const raw = res.data as Record<string, unknown>;
+      const user = parseUserFromResponse(raw, username);
+
+      // Extract tokens — handle both flat and nested shapes
+      const at =
+        (raw.accessToken as string | undefined) ??
+        ((raw.data as Record<string, unknown> | undefined)?.accessToken as
+          | string
+          | undefined) ??
+        "";
+      const rt =
+        (raw.refreshToken as string | undefined) ??
+        ((raw.data as Record<string, unknown> | undefined)?.refreshToken as
+          | string
+          | undefined) ??
+        "";
+
+      if (at) {
+        localStorage.setItem("accessToken", at);
+        localStorage.setItem("refreshToken", rt);
       }
-      console.error(
-        "[EscolaUI] Login failed:",
-        res.error,
-        "payload was:",
-        loginPayload,
-      );
-      return {
-        success: false,
-        error: res.error ?? "Login failed. Please check your credentials.",
-      };
-    } catch (err) {
-      console.error("[EscolaUI] Login exception:", err);
-      return {
-        success: false,
-        error: "Unable to connect to the server. Please try again.",
-      };
+      localStorage.setItem("user", JSON.stringify(user));
+      setState({
+        user,
+        accessToken: at,
+        refreshToken: rt,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+      return { success: true, redirectTo: getLoginRedirect(user) };
     }
+
+    return {
+      success: false,
+      error: res.error ?? "Login failed. Please check your credentials.",
+    };
   }, []);
 
   const logout = useCallback(async () => {
     if (!isDemoMode()) {
-      const refreshToken = localStorage.getItem("refreshToken");
-      if (refreshToken) {
-        // POST /auth/logout with { refreshToken }
-        api
-          .post<{ success: boolean }>("/auth/logout", { refreshToken })
-          .catch(() => {});
+      const rt = localStorage.getItem("refreshToken");
+      if (rt) {
+        api.post("/auth/logout", { refreshToken: rt }).catch(() => {});
       }
     }
+    clearTokens();
     clearStorage();
     setState({
       user: null,
@@ -381,21 +378,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: false,
       isLoading: false,
     });
-    // Redirect to login — use window.location to ensure a clean navigation
-    // that works regardless of which router context we're in.
     window.location.href = "/login";
   }, []);
 
   const refreshAccessToken = useCallback(async () => {
     if (isDemoMode()) {
-      const newToken = `demo-access-token-${Date.now()}`;
-      localStorage.setItem("accessToken", newToken);
-      setState((s) => ({ ...s, accessToken: newToken }));
+      const t = `demo-access-${Date.now()}`;
+      localStorage.setItem("accessToken", t);
+      setState((s) => ({ ...s, accessToken: t }));
       return true;
     }
-
-    // IMPORTANT: Must use refreshTokens() (plain fetch, no auth header).
-    // Using api.post() here would attach a Bearer token and cause an infinite 401 loop.
     try {
       const tokens = await refreshTokens();
       if (tokens) {
@@ -407,12 +399,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return true;
       }
     } catch {
-      // ignore
+      /* ignore */
     }
     return false;
   }, []);
 
-  // Listen for programmatic logout events dispatched from the API client (e.g. 401 cascade)
+  // Listen for 401-cascade logout events from the API client
   useEffect(() => {
     const handler = () => logout();
     window.addEventListener("auth:logout", handler);
@@ -426,12 +418,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-function clearStorage() {
-  localStorage.removeItem("accessToken");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("user");
 }
 
 export function useAuth() {

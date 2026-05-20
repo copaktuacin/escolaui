@@ -1111,8 +1111,8 @@ export default function ReportCardPage() {
                 </div>
                 <ReportCardDocument
                   report={selectedReport}
-                  schoolName={profile.schoolName}
-                  schoolLogo={profile.logo}
+                  schoolName={profile.schoolName ?? ""}
+                  schoolLogo={profile.logo ?? null}
                 />
               </motion.div>
             </AnimatePresence>

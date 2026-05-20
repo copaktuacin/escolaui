@@ -1,62 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
-import { type Tenant, adminGetTenants, adminUpdateTenant } from "../lib/api";
-import { isDemoMode } from "../lib/demoMode";
-
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-const MOCK_TENANTS: Tenant[] = [
-  {
-    id: 1,
-    schoolName: "Springfield Academy",
-    adminEmail: "admin@springfield.edu",
-    domain: "springfield.escolaui.com",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2024-09-01T00:00:00Z",
-    nextBillingDate: "2026-05-01T00:00:00Z",
-  },
-  {
-    id: 2,
-    schoolName: "Riverside Public School",
-    adminEmail: "admin@riverside.edu",
-    domain: "riverside.escolaui.com",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2024-11-15T00:00:00Z",
-    nextBillingDate: "2026-05-15T00:00:00Z",
-  },
-  {
-    id: 3,
-    schoolName: "Lakewood International",
-    adminEmail: "admin@lakewood.edu",
-    subscriptionPlan: "Basic",
-    isActive: false,
-    createdAt: "2025-01-10T00:00:00Z",
-    nextBillingDate: "2026-04-10T00:00:00Z",
-    outstandingAmount: 2400,
-  },
-  {
-    id: 4,
-    schoolName: "Greenhill Primary",
-    adminEmail: "admin@greenhill.edu",
-    subscriptionPlan: "Standard",
-    isActive: true,
-    createdAt: "2025-03-20T00:00:00Z",
-    nextBillingDate: "2026-06-20T00:00:00Z",
-  },
-  {
-    id: 5,
-    schoolName: "Westbrook High School",
-    adminEmail: "admin@westbrook.edu",
-    subscriptionPlan: "Premium",
-    isActive: true,
-    createdAt: "2025-04-01T00:00:00Z",
-    nextBillingDate: "2026-05-25T00:00:00Z",
-  },
-];
-
-let demoStore: Tenant[] = [...MOCK_TENANTS];
+import {
+  type Tenant,
+  adminGetTenants,
+  adminUpdateTenant,
+  resolveTenantId,
+} from "../lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,9 +18,11 @@ const PLAN_STYLES: Record<string, string> = {
 function PlanBadge({ plan }: { plan: string }) {
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${PLAN_STYLES[plan] ?? PLAN_STYLES.Basic}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+        PLAN_STYLES[plan] ?? PLAN_STYLES.Basic
+      }`}
     >
-      {plan}
+      {plan || "—"}
     </span>
   );
 }
@@ -93,7 +44,7 @@ function StatusBadge({ active }: { active: boolean }) {
   );
 }
 
-function initials(name: string) {
+function initials(name: string): string {
   return name
     .split(" ")
     .map((w) => w[0])
@@ -102,127 +53,39 @@ function initials(name: string) {
 }
 
 /**
- * Extract the real numeric ID from a tenant object using a catch-all scan.
- * Logs the full raw object to the console so the exact field name is always visible.
- * Priority: keys containing 'tenant'+'id' > keys containing 'school'+'id' > any key containing 'id' with a positive int > first positive int in the object.
+ * Normalize a raw API tenant — maps PascalCase .NET field names to camelCase.
+ * Preserves all original fields so resolveTenantId still works on the result.
  */
-function getTenantId(tenant: Tenant): number | null {
-  const raw = tenant as unknown as Record<string, unknown>;
-  console.log(
-    "[EscolaUI] getTenantId — raw tenant object:",
-    JSON.stringify(raw),
-  );
-
-  const keys = Object.keys(raw);
-
-  // Helper: is a value a positive finite integer?
-  const isPositiveInt = (v: unknown): v is number => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 && Math.floor(n) === n;
-  };
-
-  // Tier 1: key contains both 'tenant' and 'id' (case-insensitive)
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if (kl.includes("tenant") && kl.includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-1 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 2: key contains both 'school' and 'id' (case-insensitive)
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if (kl.includes("school") && kl.includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-2 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 3: any key that ends with or equals 'id' (case-insensitive) with a positive int
-  for (const k of keys) {
-    const kl = k.toLowerCase();
-    if ((kl === "id" || kl.endsWith("id")) && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-3 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 4: any key containing 'id' (case-insensitive) with a positive int
-  for (const k of keys) {
-    if (k.toLowerCase().includes("id") && isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via tier-4 key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  // Tier 5: fallback — first positive integer value in the entire object
-  for (const k of keys) {
-    if (isPositiveInt(raw[k])) {
-      console.log(
-        `[EscolaUI] getTenantId — resolved via fallback key "${k}":`,
-        raw[k],
-      );
-      return raw[k] as number;
-    }
-  }
-
-  console.error(
-    "[EscolaUI] getTenantId — could not find any numeric ID. Full object:",
-    JSON.stringify(raw),
-  );
-  return null;
-}
-
-/**
- * Normalize a raw API tenant object so that `id` is always populated.
- * Also maps .NET PascalCase field names to camelCase.
- */
-function normalizeTenant(raw: Tenant): Tenant {
-  const r = raw as unknown as Record<string, unknown>;
-  const realId = getTenantId(raw);
-  if (realId === null) {
-    console.warn(
-      "[EscolaUI] Tenant object has no valid ID:",
-      JSON.stringify(raw),
-    );
-  }
+function normalizeTenant(raw: unknown): Tenant {
+  const r = raw as Record<string, unknown>;
+  const id = Number(resolveTenantId(r) ?? 0);
   return {
-    id: realId ?? 0,
+    ...r,
+    id,
     schoolName: (r.SchoolName as string) ?? (r.schoolName as string) ?? "",
     adminEmail:
       (r.AdminEmail as string) ??
       (r.Email as string) ??
       (r.adminEmail as string) ??
       "",
-    domain: ((r.Domain as string) ?? (r.domain as string)) || undefined,
     subscriptionPlan: ((r.SubscriptionPlan as string) ??
       (r.subscriptionPlan as string) ??
-      "Basic") as "Basic" | "Standard" | "Premium",
-    isActive: (r.IsActive as boolean) ?? (r.isActive as boolean) ?? false,
+      "") as "Basic" | "Standard" | "Premium",
+    isActive: Boolean(
+      (r.IsActive as unknown) ?? (r.isActive as unknown) ?? false,
+    ),
     createdAt:
       (r.CreatedAt as string) ??
       (r.createdAt as string) ??
       new Date().toISOString(),
-    nextBillingDate:
-      ((r.NextBillingDate as string) ?? (r.nextBillingDate as string)) ||
+    principalName:
+      (r.PrincipalName as string) ?? (r.principalName as string) ?? undefined,
+    schoolUsername:
+      (r.SchoolUsername as string) ??
+      (r.schoolUsername as string) ??
+      (r.AdminUsername as string) ??
       undefined,
-    outstandingAmount:
-      ((r.OutstandingAmount as number) ?? (r.outstandingAmount as number)) ||
-      undefined,
-  };
+  } as Tenant;
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -239,7 +102,7 @@ export default function PlatformAdminTenantsPage() {
   >("all");
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Check for success flash from the add school page
+  // Flash from add-school page
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const created = params.get("created");
@@ -256,37 +119,22 @@ export default function PlatformAdminTenantsPage() {
     setLoading(true);
     setError(null);
     try {
-      if (isDemoMode()) {
-        await new Promise((r) => setTimeout(r, 400));
-        setTenants([...demoStore]);
-      } else {
-        const res = await adminGetTenants(1, 100);
-        if (!res.success) {
-          setError(res.error ?? "Failed to load schools. Please try again.");
-          setLoading(false);
-          return;
-        }
-        // Normalize: handle both { data: Tenant[] } envelope and plain Tenant[]
-        const rawList: Tenant[] = Array.isArray(
-          (res.data as { data?: Tenant[] })?.data,
-        )
-          ? (res.data as { data: Tenant[] }).data
-          : Array.isArray(res.data)
-            ? (res.data as unknown as Tenant[])
-            : [];
-
-        // Log first item to help diagnose field-name mismatches
-        if (rawList.length > 0) {
-          console.log(
-            "[EscolaUI] First tenant from API (raw):",
-            JSON.stringify(rawList[0]),
-          );
-        }
-
-        setTenants(rawList.map(normalizeTenant));
+      const res = await adminGetTenants(1, 100);
+      if (!res.success) {
+        setError(res.error ?? "Failed to load schools.");
+        return;
       }
+      const rawList: unknown[] = Array.isArray(res.data)
+        ? (res.data as unknown[])
+        : Array.isArray((res.data as { data?: unknown[] })?.data)
+          ? (res.data as { data: unknown[] }).data
+          : [];
+      if (rawList.length > 0) {
+        console.log("[EscolaUI] First tenant raw:", JSON.stringify(rawList[0]));
+      }
+      setTenants(rawList.map(normalizeTenant));
     } catch {
-      setError("Failed to load schools. Please try again.");
+      setError("Failed to load schools.");
     } finally {
       setLoading(false);
     }
@@ -308,51 +156,32 @@ export default function PlatformAdminTenantsPage() {
   });
 
   async function handleToggleActive(tenant: Tenant) {
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) {
-      setFeedback(
-        "Error: Could not determine school ID — cannot toggle status",
+    const id = resolveTenantId(tenant);
+    if (!id) {
+      console.error(
+        "[EscolaUI] Toggle: tenant ID missing",
+        JSON.stringify(tenant),
       );
+      setFeedback("Error: Could not determine school ID");
       setTimeout(() => setFeedback(null), 4000);
       return;
     }
-
     const newActive = !tenant.isActive;
-
-    // Optimistic update immediately
+    // Optimistic
     setTenants((prev) =>
-      prev.map((t) => (t.id === tenant.id ? { ...t, isActive: newActive } : t)),
+      prev.map((t) =>
+        resolveTenantId(t) === id ? { ...t, isActive: newActive } : t,
+      ),
     );
-
-    if (isDemoMode()) {
-      demoStore = demoStore.map((t) =>
-        t.id === tenant.id ? { ...t, isActive: newActive } : t,
-      );
-      setFeedback(
-        `${tenant.schoolName} ${newActive ? "activated" : "deactivated"}`,
-      );
-      setTimeout(() => setFeedback(null), 3000);
-      return;
-    }
-
-    console.log(
-      "[EscolaUI] Toggling tenant",
-      tenantId,
-      "to IsActive:",
-      newActive,
-    );
-
     try {
-      const res = await adminUpdateTenant(tenantId, { isActive: newActive });
+      const res = await adminUpdateTenant(id, { IsActive: newActive });
       if (!res.success) {
-        // Revert on failure
         setTenants((prev) =>
           prev.map((t) =>
-            t.id === tenant.id ? { ...t, isActive: !newActive } : t,
+            resolveTenantId(t) === id ? { ...t, isActive: !newActive } : t,
           ),
         );
-        const errorDetail = res.error ?? "Failed to update";
-        setFeedback(`Error: ${errorDetail}`);
+        setFeedback(`Error: ${res.error ?? "Failed to update"}`);
         setTimeout(() => setFeedback(null), 6000);
         return;
       }
@@ -361,10 +190,9 @@ export default function PlatformAdminTenantsPage() {
       );
       setTimeout(() => setFeedback(null), 3000);
     } catch (err) {
-      // Revert on exception
       setTenants((prev) =>
         prev.map((t) =>
-          t.id === tenant.id ? { ...t, isActive: !newActive } : t,
+          resolveTenantId(t) === id ? { ...t, isActive: !newActive } : t,
         ),
       );
       setFeedback(
@@ -375,24 +203,19 @@ export default function PlatformAdminTenantsPage() {
   }
 
   function handleViewDetails(tenant: Tenant) {
-    const tenantId = getTenantId(tenant);
-    if (!tenantId) {
-      const raw = JSON.stringify(tenant);
+    const id = resolveTenantId(tenant);
+    if (!id) {
       console.error(
-        "[EscolaUI] handleViewDetails — no numeric ID found in tenant object. Full raw object:",
-        raw,
-        "\nCheck the browser console above for which key was scanned.",
+        "[EscolaUI] View details: tenant ID missing",
+        JSON.stringify(tenant),
       );
       setFeedback(
-        "Error: Could not find school ID. Check browser console — raw object logged for debugging.",
+        "Error: Cannot navigate — school ID is missing. Check console.",
       );
       setTimeout(() => setFeedback(null), 6000);
       return;
     }
-    navigate({
-      to: "/platform-admin/schools/$id",
-      params: { id: String(tenantId) },
-    });
+    navigate({ to: "/platform-admin/schools/$id", params: { id } });
   }
 
   return (
@@ -404,7 +227,7 @@ export default function PlatformAdminTenantsPage() {
             School Management
           </h1>
           <p className="text-sm mt-0.5" style={{ color: "#64748b" }}>
-            Create, activate, and manage all school profiles (tenants)
+            Create, activate, and manage all school profiles
           </p>
         </div>
         <div className="flex gap-2">
@@ -434,7 +257,7 @@ export default function PlatformAdminTenantsPage() {
         </div>
       </div>
 
-      {/* Feedback toast */}
+      {/* Feedback */}
       {feedback && (
         <div
           className="px-4 py-2.5 rounded-lg text-sm font-medium border"
@@ -465,7 +288,7 @@ export default function PlatformAdminTenantsPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by school name or email…"
+            placeholder="Search by name or email…"
             className="w-full pl-8 pr-3 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-indigo-500/40"
             style={{
               background: "#1e293b",
@@ -510,47 +333,31 @@ export default function PlatformAdminTenantsPage() {
           style={{ background: "#1a2234", borderColor: "#1e293b" }}
           data-ocid="tenants.error_state"
         >
-          <div
-            className="w-12 h-12 rounded-full flex items-center justify-center mb-4"
-            style={{ background: "rgba(248,113,113,0.15)" }}
+          <span style={{ color: "#f87171", fontSize: "1.5rem" }}>⛔</span>
+          <p
+            className="text-sm font-semibold mt-3"
+            style={{ color: "#f1f5f9" }}
           >
-            <span style={{ color: "#f87171", fontSize: "1.5rem" }}>⛔</span>
-          </div>
-          <p className="text-sm font-semibold" style={{ color: "#f1f5f9" }}>
-            {error.startsWith("Access denied")
+            {error.includes("Access denied")
               ? "Access Denied"
               : "Failed to load schools"}
           </p>
           <p className="text-xs mt-2 max-w-sm" style={{ color: "#64748b" }}>
             {error}
           </p>
-          {error.startsWith("Access denied") ? (
-            <p
-              className="text-xs mt-3 px-4 py-2.5 rounded-lg border"
-              style={{
-                color: "#94a3b8",
-                borderColor: "#334155",
-                background: "#1e293b",
-              }}
-            >
-              Log in as <strong style={{ color: "#e2e8f0" }}>admin</strong> with
-              your SuperAdmin credentials.
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={fetchTenants}
-              className="mt-4 px-4 py-2 rounded-lg text-sm font-medium border"
-              style={{
-                background: "#1e293b",
-                borderColor: "#334155",
-                color: "#94a3b8",
-              }}
-              data-ocid="tenants.retry.button"
-            >
-              Retry
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={fetchTenants}
+            className="mt-4 px-4 py-2 rounded-lg text-sm font-medium border"
+            style={{
+              background: "#1e293b",
+              borderColor: "#334155",
+              color: "#94a3b8",
+            }}
+            data-ocid="tenants.retry.button"
+          >
+            Retry
+          </button>
         </div>
       ) : loading ? (
         <div
@@ -588,112 +395,110 @@ export default function PlatformAdminTenantsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((tenant, i) => (
-            <div
-              key={tenant.id || i}
-              className="rounded-2xl border p-4 transition-all hover:shadow-lg hover:border-indigo-900/50"
-              style={{ background: "#1a2234", borderColor: "#1e293b" }}
-              data-ocid={`tenants.row.item.${i + 1}`}
-            >
-              {/* School identity — clickable to detail */}
-              <button
-                type="button"
-                onClick={() => handleViewDetails(tenant)}
-                className="w-full text-left flex items-start gap-3 mb-3 hover:opacity-90 transition-opacity"
-                data-ocid={`tenants.view_detail.${i + 1}`}
+          {filtered.map((tenant, i) => {
+            const raw = tenant as unknown as Record<string, unknown>;
+            const principalName =
+              (raw.PrincipalName as string) ??
+              (raw.principalName as string) ??
+              "—";
+            return (
+              <div
+                key={resolveTenantId(tenant) ?? i}
+                className="rounded-2xl border p-4 transition-all hover:shadow-lg hover:border-indigo-900/50"
+                style={{ background: "#1a2234", borderColor: "#1e293b" }}
+                data-ocid={`tenants.row.item.${i + 1}`}
               >
-                <div
-                  className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white text-xs font-bold"
-                  style={{
-                    background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
-                  }}
+                {/* School header */}
+                <button
+                  type="button"
+                  onClick={() => handleViewDetails(tenant)}
+                  className="w-full text-left flex items-start gap-3 mb-3 hover:opacity-90 transition-opacity"
+                  data-ocid={`tenants.view_detail.${i + 1}`}
                 >
-                  {initials(tenant.schoolName)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p
-                    className="text-sm font-semibold truncate"
-                    style={{ color: "#f1f5f9" }}
+                  <div
+                    className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white text-xs font-bold"
+                    style={{
+                      background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+                    }}
                   >
-                    {tenant.schoolName}
-                  </p>
-                  {tenant.domain && (
+                    {initials(tenant.schoolName)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="text-sm font-semibold truncate"
+                      style={{ color: "#f1f5f9" }}
+                    >
+                      {tenant.schoolName}
+                    </p>
                     <p
                       className="text-[11px] truncate"
                       style={{ color: "#475569" }}
                     >
-                      {tenant.domain}
+                      {tenant.adminEmail}
                     </p>
-                  )}
-                </div>
-                <PlanBadge plan={tenant.subscriptionPlan} />
-              </button>
+                  </div>
+                  <PlanBadge plan={tenant.subscriptionPlan} />
+                </button>
 
-              <div className="space-y-1.5 mb-3">
-                <p className="text-xs truncate" style={{ color: "#475569" }}>
-                  ✉ {tenant.adminEmail}
-                </p>
-                <p className="text-xs" style={{ color: "#475569" }}>
-                  Created{" "}
-                  {new Date(tenant.createdAt).toLocaleDateString("en-US", {
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </p>
-                {(tenant.outstandingAmount ?? 0) > 0 && (
-                  <p
-                    className="text-xs font-semibold"
-                    style={{ color: "#f87171" }}
-                  >
-                    ⚠ Outstanding: ₹
-                    {(tenant.outstandingAmount ?? 0).toLocaleString()}
+                {/* Details */}
+                <div className="space-y-1 mb-3">
+                  <p className="text-xs" style={{ color: "#475569" }}>
+                    <span style={{ color: "#64748b" }}>Principal: </span>
+                    {principalName}
                   </p>
-                )}
-              </div>
+                  <p className="text-xs" style={{ color: "#475569" }}>
+                    Created{" "}
+                    {new Date(tenant.createdAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
 
-              <div
-                className="flex items-center justify-between pt-3 border-t"
-                style={{ borderColor: "#1e293b" }}
-              >
-                {/* Active toggle */}
-                <div className="flex items-center gap-2">
+                {/* Actions */}
+                <div
+                  className="flex items-center justify-between pt-3 border-t"
+                  style={{ borderColor: "#1e293b" }}
+                >
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(tenant)}
+                      className="relative w-9 h-5 rounded-full transition-colors focus:outline-none"
+                      style={{
+                        background: tenant.isActive ? "#10b981" : "#374151",
+                      }}
+                      aria-label={
+                        tenant.isActive
+                          ? "Deactivate school"
+                          : "Activate school"
+                      }
+                      data-ocid={`tenants.active_toggle.${i + 1}`}
+                    >
+                      <span
+                        className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+                        style={{
+                          transform: tenant.isActive
+                            ? "translateX(16px)"
+                            : "translateX(0)",
+                        }}
+                      />
+                    </button>
+                    <StatusBadge active={tenant.isActive} />
+                  </div>
                   <button
                     type="button"
-                    onClick={() => handleToggleActive(tenant)}
-                    className="relative w-9 h-5 rounded-full transition-colors focus:outline-none"
-                    style={{
-                      background: tenant.isActive ? "#10b981" : "#374151",
-                    }}
-                    aria-label={
-                      tenant.isActive ? "Deactivate school" : "Activate school"
-                    }
-                    data-ocid={`tenants.active_toggle.${i + 1}`}
+                    onClick={() => handleViewDetails(tenant)}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:bg-indigo-900/20"
+                    style={{ borderColor: "#4f46e5", color: "#818cf8" }}
+                    data-ocid={`tenants.view_detail_btn.${i + 1}`}
                   >
-                    <span
-                      className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-                      style={{
-                        transform: tenant.isActive
-                          ? "translateX(16px)"
-                          : "translateX(0)",
-                      }}
-                    />
+                    View Details →
                   </button>
-                  <StatusBadge active={tenant.isActive} />
                 </div>
-
-                {/* View Details link */}
-                <button
-                  type="button"
-                  onClick={() => handleViewDetails(tenant)}
-                  className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors hover:bg-indigo-900/20"
-                  style={{ borderColor: "#4f46e5", color: "#818cf8" }}
-                  data-ocid={`tenants.view_detail_btn.${i + 1}`}
-                >
-                  View Details →
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

@@ -1,35 +1,42 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Bell,
+  AlertCircle,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   Clock,
   Loader2,
   QrCode,
+  RefreshCw,
   Save,
   Users,
   XCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  useAttendanceRecords,
-  useSaveAttendance,
-  useStudentsForClass,
+  useAcademicYears,
+  useAttendance,
+  useClasses,
+  useSections,
+  useStudents,
+  useSubmitAttendance,
+} from "../hooks/useQueries";
+import type {
+  AcademicYearDto,
+  ClassDto,
+  SectionDto,
 } from "../hooks/useQueries";
 
-type AttendanceStatus = "present" | "absent" | "late";
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type AttendanceStatus = "Present" | "Absent" | "Late";
+
+const STATUS_OPTIONS: AttendanceStatus[] = ["Present", "Absent", "Late"];
 
 const statusConfig: Record<
   AttendanceStatus,
@@ -37,7 +44,6 @@ const statusConfig: Record<
     label: string;
     activeClass: string;
     inactiveClass: string;
-    icon: React.ComponentType<{ className?: string }>;
     dot: string;
     rowBg: string;
     summaryBg: string;
@@ -45,96 +51,48 @@ const statusConfig: Record<
     summaryBorder: string;
   }
 > = {
-  present: {
+  Present: {
     label: "Present",
     activeClass: "bg-emerald-500 text-white border-emerald-500 shadow-sm",
     inactiveClass:
       "border-border text-muted-foreground hover:border-emerald-400 hover:text-emerald-600 hover:bg-emerald-50",
-    icon: CheckCircle2,
     dot: "bg-emerald-500",
     rowBg: "",
     summaryBg: "bg-emerald-50",
     summaryText: "text-emerald-700",
     summaryBorder: "border-emerald-200",
   },
-  absent: {
+  Absent: {
     label: "Absent",
     activeClass: "bg-red-500 text-white border-red-500 shadow-sm",
     inactiveClass:
       "border-border text-muted-foreground hover:border-red-400 hover:text-red-600 hover:bg-red-50",
-    icon: XCircle,
     dot: "bg-red-500",
-    rowBg: "bg-red-500/3",
+    rowBg: "bg-red-500/5",
     summaryBg: "bg-red-50",
     summaryText: "text-red-700",
     summaryBorder: "border-red-200",
   },
-  late: {
+  Late: {
     label: "Late",
     activeClass: "bg-amber-500 text-white border-amber-500 shadow-sm",
     inactiveClass:
       "border-border text-muted-foreground hover:border-amber-400 hover:text-amber-600 hover:bg-amber-50",
-    icon: Clock,
     dot: "bg-amber-500",
-    rowBg: "bg-amber-500/3",
+    rowBg: "bg-amber-500/5",
     summaryBg: "bg-amber-50",
     summaryText: "text-amber-700",
     summaryBorder: "border-amber-200",
   },
 };
 
-type AbsenceReport = {
-  studentId: string;
-  name: string;
-  class: string;
-  totalAbsences: number;
-  lastAbsent: string;
-};
-
-const absenceReports: AbsenceReport[] = [
-  {
-    studentId: "s1",
-    name: "Adaeze Okonkwo",
-    class: "10A",
-    totalAbsences: 4,
-    lastAbsent: "2026-03-25",
-  },
-  {
-    studentId: "s3",
-    name: "Fatima Al-Hassan",
-    class: "10A",
-    totalAbsences: 7,
-    lastAbsent: "2026-03-28",
-  },
-  {
-    studentId: "s5",
-    name: "Amara Diallo",
-    class: "10B",
-    totalAbsences: 2,
-    lastAbsent: "2026-03-20",
-  },
-  {
-    studentId: "s7",
-    name: "Yemi Adeyemi",
-    class: "10B",
-    totalAbsences: 5,
-    lastAbsent: "2026-03-27",
-  },
-  {
-    studentId: "s9",
-    name: "Kola Aina",
-    class: "11A",
-    totalAbsences: 3,
-    lastAbsent: "2026-03-22",
-  },
-];
-
-const CLASS_OPTIONS = [6, 7, 8, 9, 10, 11];
-const SECTION_OPTIONS = [
-  { id: "A", label: "Section A" },
-  { id: "B", label: "Section B" },
-  { id: "C", label: "Section C" },
-  { id: "D", label: "Section D" },
+const avatarColors = [
+  "bg-primary/20 text-primary",
+  "bg-emerald-500/20 text-emerald-600",
+  "bg-amber-500/20 text-amber-600",
+  "bg-red-500/20 text-red-600",
+  "bg-purple-500/20 text-purple-600",
+  "bg-cyan-500/20 text-cyan-600",
 ];
 
 function getInitials(name: string) {
@@ -146,19 +104,28 @@ function getInitials(name: string) {
     .toUpperCase();
 }
 
-const avatarColors = [
-  "bg-primary/20 text-primary",
-  "bg-emerald-500/20 text-emerald-600",
-  "bg-amber-500/20 text-amber-600",
-  "bg-red-500/20 text-red-600",
-  "bg-purple-500/20 text-purple-600",
-  "bg-cyan-500/20 text-cyan-600",
-];
+function getDtoId(dto: AcademicYearDto | ClassDto | SectionDto): number {
+  return (dto as { Id?: number }).Id ?? (dto as { id?: number }).id ?? 0;
+}
+
+function getAcademicYearLabel(dto: AcademicYearDto): string {
+  return dto.YearLabel ?? dto.yearLabel ?? String(getDtoId(dto));
+}
+
+function getClassName(dto: ClassDto): string {
+  return dto.ClassName ?? dto.className ?? `Class ${getDtoId(dto)}`;
+}
+
+function getSectionName(dto: SectionDto): string {
+  return dto.SectionName ?? dto.sectionName ?? `Section ${getDtoId(dto)}`;
+}
+
+// ─── Skeleton ────────────────────────────────────────────────────────────────
 
 function AttendanceRowSkeleton() {
   return (
     <div className="p-5 space-y-3" data-ocid="attendance.loading_state">
-      {[1, 2, 3, 4, 5, 6].map((k) => (
+      {[1, 2, 3, 4, 5].map((k) => (
         <div key={k} className="flex items-center gap-4 px-2">
           <Skeleton className="w-10 h-10 rounded-xl flex-shrink-0" />
           <div className="flex-1 space-y-1.5">
@@ -176,66 +143,155 @@ function AttendanceRowSkeleton() {
   );
 }
 
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function AttendancePage() {
   const today = new Date().toISOString().split("T")[0];
+
+  // ── Filter state (uncontrolled refs drive selects) ────────────────────────
   const [date, setDate] = useState(today);
-  const [selectedClass, setSelectedClass] = useState("10");
-  const [selectedSection, setSelectedSection] = useState("A");
+
+  // Selected IDs (committed on "Load Attendance")
+  const [selectedYearId, setSelectedYearId] = useState<string>("");
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [selectedSection, setSelectedSection] = useState<string>("");
+
+  // Committed values (what the current attendance grid is for)
+  const [committedClassId, setCommittedClassId] = useState<string>("");
+  const [committedSection, setCommittedSection] = useState<string>("");
+  const [committedDate, setCommittedDate] = useState("");
+
+  // Track whether user has loaded attendance at least once
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  // Uncontrolled dropdown refs (immune to React state resets)
+  const yearSelectRef = useRef<HTMLSelectElement>(null);
+  const classSelectRef = useRef<HTMLSelectElement>(null);
+  const sectionSelectRef = useRef<HTMLSelectElement>(null);
+
+  // Attendance marks
   const [localAttendance, setLocalAttendance] = useState<
     Record<string, AttendanceStatus>
   >({});
+
+  // QR
   const [qrInput, setQrInput] = useState("");
   const [scanHistory, setScanHistory] = useState<
     { id: string; name: string; time: string }[]
   >([]);
 
-  const classKey = `${selectedClass}${selectedSection}`;
-
-  const studentsQuery = useStudentsForClass(classKey);
-  const attendanceQuery = useAttendanceRecords(
-    date,
-    selectedClass,
-    selectedSection,
+  // ── Data fetches ──────────────────────────────────────────────────────────
+  const yearsQuery = useAcademicYears();
+  const classesQuery = useClasses(
+    selectedYearId ? Number(selectedYearId) : undefined,
   );
-  const saveMutation = useSaveAttendance();
+  const sectionsQuery = useSections(
+    selectedClassId ? Number(selectedClassId) : undefined,
+  );
 
-  useEffect(() => {
-    if (studentsQuery.error)
-      toast.error("Failed to load students", {
-        description: (studentsQuery.error as Error).message,
-      });
-    if (attendanceQuery.error)
-      toast.error("Failed to load attendance records", {
-        description: (attendanceQuery.error as Error).message,
-      });
-  }, [studentsQuery.error, attendanceQuery.error]);
+  // Students: always fetch for current committed class/section
+  const studentsQuery = useStudents(
+    committedClassId && committedSection
+      ? {
+          classId: Number(committedClassId),
+          section: committedSection,
+          limit: 200,
+        }
+      : undefined,
+  );
 
+  // Existing attendance records
+  const attendanceQuery = useAttendance(
+    committedClassId,
+    committedSection,
+    committedDate,
+  );
+
+  const submitMutation = useSubmitAttendance();
+
+  // ── Reset classes when year changes ──────────────────────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
   useEffect(() => {
-    if (attendanceQuery.data) {
+    setSelectedClassId("");
+    setSelectedSection("");
+    if (classSelectRef.current) classSelectRef.current.value = "";
+    if (sectionSelectRef.current) sectionSelectRef.current.value = "";
+  }, [selectedYearId]);
+
+  // ── Reset sections when class changes ────────────────────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
+  useEffect(() => {
+    setSelectedSection("");
+    if (sectionSelectRef.current) sectionSelectRef.current.value = "";
+  }, [selectedClassId]);
+
+  // ── Pre-fill existing attendance ──────────────────────────────────────────
+  useEffect(() => {
+    if (attendanceQuery.data && attendanceQuery.data.length > 0) {
       const map: Record<string, AttendanceStatus> = {};
       for (const r of attendanceQuery.data) {
-        map[r.studentId] = r.status;
+        if (r.studentId) {
+          const raw = r.status ?? "Present";
+          const normalized =
+            raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+          map[String(r.studentId)] =
+            (normalized as AttendanceStatus) in statusConfig
+              ? (normalized as AttendanceStatus)
+              : "Present";
+        }
       }
       setLocalAttendance(map);
     }
   }, [attendanceQuery.data]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fires on selector changes
-  useEffect(() => {
-    setLocalAttendance({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClass, selectedSection, date]);
+  // ── Normalize students ────────────────────────────────────────────────────
+  const students = (studentsQuery.data?.data ?? []).map((s) => ({
+    id: String(s.studentId),
+    name: s.fullName,
+    rollNo: s.enrollmentNo || String(s.studentId),
+  }));
 
-  const classStudents = studentsQuery.data ?? [];
-
-  const counts = classStudents.reduce(
+  const total = students.length;
+  const counts = students.reduce(
     (acc, s) => {
-      const status = localAttendance[s.id] ?? "present";
+      const status: AttendanceStatus = localAttendance[s.id] ?? "Present";
       acc[status] = (acc[status] ?? 0) + 1;
       return acc;
     },
-    { present: 0, absent: 0, late: 0 } as Record<AttendanceStatus, number>,
+    { Present: 0, Absent: 0, Late: 0 } as Record<AttendanceStatus, number>,
   );
+  const presentPct = total > 0 ? Math.round((counts.Present / total) * 100) : 0;
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  function handleYearChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setSelectedYearId(e.target.value);
+  }
+
+  function handleClassChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setSelectedClassId(e.target.value);
+  }
+
+  function handleSectionChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setSelectedSection(e.target.value);
+  }
+
+  function handleLoad() {
+    const classId = classSelectRef.current?.value ?? selectedClassId;
+    const section = sectionSelectRef.current?.value ?? selectedSection;
+    if (!classId) {
+      toast.error("Please select a class");
+      return;
+    }
+    if (!section) {
+      toast.error("Please select a section");
+      return;
+    }
+    setLocalAttendance({});
+    setCommittedClassId(classId);
+    setCommittedSection(section);
+    setCommittedDate(date);
+    setHasLoaded(true);
+  }
 
   function setStatus(studentId: string, status: AttendanceStatus) {
     setLocalAttendance((prev) => ({ ...prev, [studentId]: status }));
@@ -243,27 +299,32 @@ export default function AttendancePage() {
 
   function markAllPresent() {
     const map: Record<string, AttendanceStatus> = {};
-    for (const s of classStudents) {
-      map[s.id] = "present";
-    }
+    for (const s of students) map[s.id] = "Present";
     setLocalAttendance(map);
-    toast.success(`All ${classStudents.length} students marked Present`);
+    toast.success(`All ${students.length} students marked Present`);
   }
 
   async function handleSubmit() {
-    const records = classStudents.map((s) => ({
+    if (!committedClassId || !committedSection) {
+      toast.error("Load attendance before saving");
+      return;
+    }
+    const records = students.map((s) => ({
       studentId: s.id,
-      status: localAttendance[s.id] ?? "present",
+      status: (localAttendance[s.id] ?? "Present").toLowerCase() as
+        | "present"
+        | "absent"
+        | "late",
     }));
     try {
-      await saveMutation.mutateAsync({
-        date,
-        classId: Number(selectedClass),
-        sectionId: selectedSection,
+      await submitMutation.mutateAsync({
+        date: committedDate,
+        classId: Number(committedClassId),
+        sectionId: committedSection,
         records,
       });
-      toast.success(`Attendance for Class ${classKey} saved!`, {
-        description: `${counts.present} present · ${counts.absent} absent · ${counts.late} late`,
+      toast.success("Attendance saved!", {
+        description: `${counts.Present} present · ${counts.Absent} absent · ${counts.Late} late`,
       });
     } catch (err) {
       toast.error("Failed to save attendance", {
@@ -275,14 +336,14 @@ export default function AttendancePage() {
   function handleQrScan() {
     const trimmed = qrInput.trim();
     if (!trimmed) return;
-    const student = classStudents.find(
-      (s) => s.id === trimmed || String(s.rollNo) === trimmed,
+    const student = students.find(
+      (s) => s.id === trimmed || s.rollNo === trimmed,
     );
     if (!student) {
-      toast.error(`Student ID "${trimmed}" not found`);
+      toast.error(`Student ID "${trimmed}" not found in this class`);
       return;
     }
-    setStatus(student.id, "present");
+    setStatus(student.id, "Present");
     setScanHistory((prev) => [
       {
         id: student.id,
@@ -291,13 +352,21 @@ export default function AttendancePage() {
       },
       ...prev,
     ]);
-    toast.success(`${student.name} marked present via QR`);
+    toast.success(`${student.name} marked Present via QR`);
     setQrInput("");
   }
 
-  const total = classStudents.length;
-  const presentPct = total > 0 ? Math.round((counts.present / total) * 100) : 0;
+  // ── Helper: selected class name label ─────────────────────────────────────
+  const selectedClassLabel = committedClassId
+    ? (classesQuery.data?.find(
+        (c) => String(getDtoId(c)) === committedClassId,
+      ) ?? null)
+    : null;
+  const gridLabel = selectedClassLabel
+    ? `${getClassName(selectedClassLabel)} — ${committedSection}`
+    : "Attendance";
 
+  // ── Stat cards ────────────────────────────────────────────────────────────
   const statCards = [
     {
       label: "Total",
@@ -309,7 +378,7 @@ export default function AttendancePage() {
     },
     {
       label: "Present",
-      value: counts.present,
+      value: counts.Present,
       icon: CheckCircle2,
       color: "text-emerald-600",
       iconBg: "bg-emerald-100",
@@ -317,7 +386,7 @@ export default function AttendancePage() {
     },
     {
       label: "Absent",
-      value: counts.absent,
+      value: counts.Absent,
       icon: XCircle,
       color: "text-red-600",
       iconBg: "bg-red-100",
@@ -325,13 +394,18 @@ export default function AttendancePage() {
     },
     {
       label: "Late",
-      value: counts.late,
+      value: counts.Late,
       icon: Clock,
       color: "text-amber-600",
       iconBg: "bg-amber-100",
       border: "border-amber-200",
     },
   ];
+
+  const isGridLoading = studentsQuery.isPending && hasLoaded;
+  const canLoad =
+    !!(selectedClassId || classSelectRef.current?.value) &&
+    !!(selectedSection || sectionSelectRef.current?.value);
 
   return (
     <motion.div
@@ -340,76 +414,174 @@ export default function AttendancePage() {
       transition={{ duration: 0.35, type: "tween", ease: "easeOut" }}
       className="space-y-6"
     >
-      {/* ── Page Header ───────────────────────────────────────────────────── */}
+      {/* ── Page Header ──────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground font-display tracking-tight">
             Attendance
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Daily marking —{" "}
-            <span className="font-semibold text-foreground">
-              Class {classKey}
-            </span>
+            {hasLoaded && committedClassId
+              ? `Marking for ${gridLabel}`
+              : "Select class and section to begin"}
           </p>
         </div>
+      </div>
 
-        {/* ── Toolbar: date + class + section ─────────────────────────────── */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Date picker — glass styled */}
-          <div className="glass flex items-center gap-2 rounded-xl px-3 py-2 border border-white/30 shadow-card">
-            <CalendarDays className="w-4 h-4 text-primary flex-shrink-0" />
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="text-sm bg-transparent text-foreground outline-none min-w-[130px]"
-              data-ocid="attendance.date.input"
-            />
+      {/* ── Step 1: Selector Panel ────────────────────────────────────────── */}
+      <div className="bg-card rounded-2xl border border-border shadow-card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center flex-shrink-0">
+            1
+          </div>
+          <h2 className="text-sm font-bold text-foreground">
+            Select Class &amp; Section
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+          {/* Academic Year */}
+          <div className="space-y-1.5">
+            <label
+              className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+              htmlFor="att-year"
+            >
+              Academic Year
+            </label>
+            <div className="relative">
+              <select
+                ref={yearSelectRef}
+                defaultValue=""
+                onChange={handleYearChange}
+                className="w-full h-10 px-3 pr-8 rounded-xl border border-border bg-muted/30 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 appearance-none transition-shadow"
+                data-ocid="attendance.year.select"
+                id="att-year"
+              >
+                <option value="">All Years</option>
+                {(yearsQuery.data ?? []).map((y) => (
+                  <option key={getDtoId(y)} value={String(getDtoId(y))}>
+                    {getAcademicYearLabel(y)}
+                  </option>
+                ))}
+              </select>
+              <ChevronRight className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground rotate-90 pointer-events-none" />
+            </div>
           </div>
 
-          {/* Class selector — glass styled */}
-          <div className="glass rounded-xl border border-white/30 shadow-card">
-            <Select value={selectedClass} onValueChange={setSelectedClass}>
-              <SelectTrigger
-                className="w-28 bg-transparent border-0 shadow-none"
+          {/* Class */}
+          <div className="space-y-1.5">
+            <label
+              className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+              htmlFor="att-class"
+            >
+              Class <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <select
+                ref={classSelectRef}
+                defaultValue=""
+                onChange={handleClassChange}
+                className="w-full h-10 px-3 pr-8 rounded-xl border border-border bg-muted/30 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 appearance-none transition-shadow"
                 data-ocid="attendance.class.select"
+                id="att-class"
               >
-                <SelectValue placeholder="Class" />
-              </SelectTrigger>
-              <SelectContent>
-                {CLASS_OPTIONS.map((c) => (
-                  <SelectItem key={c} value={String(c)}>
-                    Class {c}
-                  </SelectItem>
+                <option value="">Select class…</option>
+                {(classesQuery.data ?? []).map((c) => (
+                  <option key={getDtoId(c)} value={String(getDtoId(c))}>
+                    {getClassName(c)}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </select>
+              <ChevronRight className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground rotate-90 pointer-events-none" />
+            </div>
+            {classesQuery.isPending && (
+              <p className="text-xs text-muted-foreground">Loading classes…</p>
+            )}
           </div>
 
-          {/* Section selector — glass styled */}
-          <div className="glass rounded-xl border border-white/30 shadow-card">
-            <Select value={selectedSection} onValueChange={setSelectedSection}>
-              <SelectTrigger
-                className="w-28 bg-transparent border-0 shadow-none"
+          {/* Section */}
+          <div className="space-y-1.5">
+            <label
+              className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+              htmlFor="att-section"
+            >
+              Section <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <select
+                ref={sectionSelectRef}
+                defaultValue=""
+                onChange={handleSectionChange}
+                className="w-full h-10 px-3 pr-8 rounded-xl border border-border bg-muted/30 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 appearance-none transition-shadow"
                 data-ocid="attendance.section.select"
+                id="att-section"
               >
-                <SelectValue placeholder="Section" />
-              </SelectTrigger>
-              <SelectContent>
-                {SECTION_OPTIONS.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.label}
-                  </SelectItem>
+                <option value="">Select section…</option>
+                {(sectionsQuery.data ?? []).map((sec) => (
+                  <option key={getDtoId(sec)} value={getSectionName(sec)}>
+                    {getSectionName(sec)}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </select>
+              <ChevronRight className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground rotate-90 pointer-events-none" />
+            </div>
+            {sectionsQuery.isPending && selectedClassId && (
+              <p className="text-xs text-muted-foreground">Loading sections…</p>
+            )}
+          </div>
+
+          {/* Date */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="att-date"
+              className="text-xs font-medium text-muted-foreground uppercase tracking-wide"
+            >
+              Date
+            </label>
+            <div className="flex items-center gap-2 h-10 px-3 rounded-xl border border-border bg-muted/30">
+              <CalendarDays className="w-4 h-4 text-primary flex-shrink-0" />
+              <input
+                id="att-date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="flex-1 text-sm bg-transparent text-foreground outline-none min-w-0"
+                data-ocid="attendance.date.input"
+              />
+            </div>
+          </div>
+
+          {/* Load button */}
+          <div className="space-y-1.5">
+            <label
+              className="text-xs font-medium text-transparent uppercase tracking-wide select-none"
+              htmlFor="att-load-btn"
+            >
+              &nbsp;
+            </label>
+            <Button
+              type="button"
+              onClick={handleLoad}
+              disabled={!canLoad}
+              className="w-full h-10 btn-school-primary gap-2"
+              data-ocid="attendance.load.button"
+            >
+              {isGridLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4" /> Load Attendance
+                </>
+              )}
+            </Button>
           </div>
         </div>
       </div>
 
-      {/* ── Summary Strip ─────────────────────────────────────────────────── */}
-      {!studentsQuery.isPending && total > 0 && (
+      {/* ── Summary Strip (only after first load) ─────────────────────────── */}
+      {hasLoaded && !isGridLoading && total > 0 && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -417,10 +589,10 @@ export default function AttendancePage() {
         >
           <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary" />
-            {total} students in Class {classKey}
+            {total} students · {gridLabel}
           </div>
           <div className="flex-1 h-px bg-border" />
-          {(["present", "absent", "late"] as AttendanceStatus[]).map((s) => (
+          {STATUS_OPTIONS.map((s) => (
             <span
               key={s}
               className={`badge-premium ${statusConfig[s].summaryBg} ${statusConfig[s].summaryText} border ${statusConfig[s].summaryBorder} gap-1.5`}
@@ -438,60 +610,59 @@ export default function AttendancePage() {
       )}
 
       {/* ── Stat Cards ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card, i) => (
-          <motion.div
-            key={card.label}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.06 * i, type: "tween" }}
-            className={`bg-card rounded-2xl border ${card.border} shadow-card p-5 relative overflow-hidden hover-lift card-premium`}
-            data-ocid={`attendance.${card.label.toLowerCase().replace(/\s+/g, "_")}.card`}
-          >
-            <div
-              className={`absolute top-0 right-0 w-16 h-16 rounded-full ${card.iconBg} blur-2xl opacity-50 translate-x-4 -translate-y-4`}
-            />
-            <div className="relative flex items-start justify-between">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
-                  {card.label}
-                </p>
-                {studentsQuery.isPending ? (
-                  <Skeleton className="h-9 w-14 mt-1" />
-                ) : (
-                  <p
-                    className={`text-4xl font-bold text-foreground mt-1 font-display ${card.color}`}
-                  >
-                    {card.value}
+      {hasLoaded && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((card, i) => (
+            <motion.div
+              key={card.label}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.06 * i, type: "tween" }}
+              className={`bg-card rounded-2xl border ${card.border} shadow-card p-5 relative overflow-hidden hover-lift card-premium`}
+              data-ocid={`attendance.${card.label.toLowerCase()}.card`}
+            >
+              <div
+                className={`absolute top-0 right-0 w-16 h-16 rounded-full ${card.iconBg} blur-2xl opacity-50 translate-x-4 -translate-y-4`}
+              />
+              <div className="relative flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                    {card.label}
                   </p>
-                )}
-                {card.label === "Present" &&
-                  !studentsQuery.isPending &&
-                  total > 0 && (
+                  {isGridLoading ? (
+                    <Skeleton className="h-9 w-14 mt-1" />
+                  ) : (
+                    <p
+                      className={`text-4xl font-bold text-foreground mt-1 font-display ${card.color}`}
+                    >
+                      {card.value}
+                    </p>
+                  )}
+                  {card.label === "Present" && !isGridLoading && total > 0 && (
                     <p className="text-xs text-muted-foreground mt-1">
                       {presentPct}% rate
                     </p>
                   )}
+                </div>
+                <div
+                  className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center flex-shrink-0`}
+                >
+                  <card.icon className={`w-5 h-5 ${card.color}`} />
+                </div>
               </div>
-              <div
-                className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center flex-shrink-0`}
-              >
-                <card.icon className={`w-5 h-5 ${card.color}`} />
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
       <Tabs defaultValue="daily">
         <TabsList className="bg-muted/60 p-1" data-ocid="attendance.tab">
           <TabsTrigger value="daily">Daily Marking</TabsTrigger>
           <TabsTrigger value="qr">QR / Biometric</TabsTrigger>
-          <TabsTrigger value="reports">Absence Reports</TabsTrigger>
         </TabsList>
 
-        {/* ── Daily Marking Tab ─────────────────────────────────────────── */}
+        {/* ── Daily Marking Tab ──────────────────────────────────────────── */}
         <TabsContent value="daily" className="mt-5">
           <motion.div
             initial={{ opacity: 0 }}
@@ -500,26 +671,34 @@ export default function AttendancePage() {
             className="bg-card rounded-2xl border border-border shadow-card overflow-hidden"
           >
             {/* Card header */}
-            <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-muted/30 to-transparent flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-muted/30 to-transparent flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-foreground font-display">
-                  Class {classKey}
+                  {hasLoaded ? gridLabel : "Daily Attendance"}
                 </h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {new Date(date).toLocaleDateString("en-GB", {
-                    weekday: "long",
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
+                  {hasLoaded && committedDate
+                    ? new Date(committedDate).toLocaleDateString("en-GB", {
+                        weekday: "long",
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })
+                    : "Select class and section, then click Load Attendance"}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-xs bg-card font-mono">
-                  {classStudents.length} students
-                </Badge>
-                {classStudents.length > 0 && !studentsQuery.isPending && (
+                {hasLoaded && (
+                  <Badge
+                    variant="outline"
+                    className="text-xs bg-card font-mono"
+                  >
+                    {students.length} students
+                  </Badge>
+                )}
+                {students.length > 0 && !isGridLoading && (
                   <Button
+                    type="button"
                     size="sm"
                     variant="outline"
                     onClick={markAllPresent}
@@ -532,10 +711,25 @@ export default function AttendancePage() {
               </div>
             </div>
 
-            {/* Student list */}
-            {studentsQuery.isPending ? (
+            {/* Step 2 body */}
+            {!hasLoaded ? (
+              <div
+                className="text-center py-20 text-muted-foreground"
+                data-ocid="attendance.prompt_state"
+              >
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/40 flex items-center justify-center mb-4">
+                  <AlertCircle className="w-8 h-8 opacity-30" />
+                </div>
+                <p className="font-bold text-base text-foreground">
+                  No attendance loaded yet
+                </p>
+                <p className="text-sm mt-1 text-muted-foreground/70">
+                  Choose a class and section above, then click Load Attendance.
+                </p>
+              </div>
+            ) : isGridLoading ? (
               <AttendanceRowSkeleton />
-            ) : classStudents.length === 0 ? (
+            ) : students.length === 0 ? (
               <div
                 className="text-center py-20 text-muted-foreground"
                 data-ocid="attendance.empty_state"
@@ -544,16 +738,17 @@ export default function AttendancePage() {
                   <Users className="w-8 h-8 opacity-30" />
                 </div>
                 <p className="font-bold text-base text-foreground">
-                  No students in Class {classKey}
+                  No students found
                 </p>
                 <p className="text-sm mt-1 text-muted-foreground/70">
-                  Try selecting a different class or section.
+                  No students enrolled in this class and section.
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-border/60">
-                {classStudents.map((student, i) => {
-                  const status = localAttendance[student.id] ?? "present";
+                {students.map((student, i) => {
+                  const status: AttendanceStatus =
+                    localAttendance[student.id] ?? "Present";
                   const colorCls = avatarColors[i % avatarColors.length];
                   const cfg = statusConfig[status];
                   return (
@@ -582,11 +777,9 @@ export default function AttendancePage() {
                         </p>
                       </div>
 
-                      {/* Segmented status buttons */}
+                      {/* Status buttons */}
                       <div className="flex items-center gap-1.5">
-                        {(
-                          ["present", "absent", "late"] as AttendanceStatus[]
-                        ).map((s) => {
+                        {STATUS_OPTIONS.map((s) => {
                           const sCfg = statusConfig[s];
                           return (
                             <button
@@ -598,7 +791,7 @@ export default function AttendancePage() {
                                   ? sCfg.activeClass
                                   : sCfg.inactiveClass
                               }`}
-                              data-ocid={`attendance.${s}.toggle`}
+                              data-ocid={`attendance.${s.toLowerCase()}.toggle`}
                             >
                               {sCfg.label}
                             </button>
@@ -612,10 +805,10 @@ export default function AttendancePage() {
             )}
 
             {/* Footer: summary + sticky save */}
-            <div className="sticky bottom-0 px-6 py-4 bg-card border-t border-border shadow-subtle flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                {(["present", "absent", "late"] as AttendanceStatus[]).map(
-                  (s) => (
+            {hasLoaded && (
+              <div className="sticky bottom-0 px-6 py-4 bg-card border-t border-border shadow-subtle flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {STATUS_OPTIONS.map((s) => (
                     <span
                       key={s}
                       className={`badge-premium ${statusConfig[s].summaryBg} ${statusConfig[s].summaryText} border ${statusConfig[s].summaryBorder} gap-1.5`}
@@ -625,30 +818,31 @@ export default function AttendancePage() {
                       />
                       {counts[s]} {statusConfig[s].label}
                     </span>
-                  ),
-                )}
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={submitMutation.isPending || students.length === 0}
+                  className="gap-2 btn-school-primary hover-lift flex-shrink-0"
+                  data-ocid="attendance.submit_button"
+                >
+                  {submitMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" /> Save Attendance
+                    </>
+                  )}
+                </Button>
               </div>
-              <Button
-                onClick={handleSubmit}
-                disabled={saveMutation.isPending || classStudents.length === 0}
-                className="gap-2 btn-school-primary hover-lift flex-shrink-0"
-                data-ocid="attendance.submit_button"
-              >
-                {saveMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> Saving…
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" /> Save Attendance
-                  </>
-                )}
-              </Button>
-            </div>
+            )}
           </motion.div>
         </TabsContent>
 
-        {/* ── QR Tab ────────────────────────────────────────────────────── */}
+        {/* ── QR Tab ──────────────────────────────────────────────────────── */}
         <TabsContent value="qr" className="mt-5">
           <div className="grid lg:grid-cols-2 gap-5">
             {/* QR scan input */}
@@ -662,10 +856,15 @@ export default function AttendancePage() {
                     QR / Biometric Scan
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    Scan or paste a student ID to mark present
+                    Scan or paste a student ID to mark Present
                   </p>
                 </div>
               </div>
+              {!hasLoaded && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                  Load a class first from Step 1 above to enable QR scanning.
+                </div>
+              )}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -673,11 +872,14 @@ export default function AttendancePage() {
                   onChange={(e) => setQrInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleQrScan()}
                   placeholder="Scan or paste student ID…"
-                  className="flex-1 h-10 px-3 rounded-xl border border-border bg-muted/30 text-sm outline-none focus:ring-2 focus:ring-primary/30 transition-shadow input-premium"
+                  disabled={!hasLoaded}
+                  className="flex-1 h-10 px-3 rounded-xl border border-border bg-muted/30 text-sm outline-none focus:ring-2 focus:ring-primary/30 transition-shadow input-premium disabled:opacity-50"
                   data-ocid="attendance.qr.input"
                 />
                 <Button
+                  type="button"
                   onClick={handleQrScan}
+                  disabled={!hasLoaded}
                   className="btn-school-primary rounded-xl"
                   data-ocid="attendance.qr.submit_button"
                 >
@@ -685,7 +887,7 @@ export default function AttendancePage() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground/70">
-                Tip: Use student IDs from the class roster.
+                Tip: Enter the student enrollment number or ID.
               </p>
             </div>
 
@@ -737,67 +939,6 @@ export default function AttendancePage() {
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-        </TabsContent>
-
-        {/* ── Absence Reports Tab ───────────────────────────────────────── */}
-        <TabsContent value="reports" className="mt-5">
-          <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-muted/30 to-transparent">
-              <h2 className="font-bold text-foreground font-display">
-                Absence Summary Report
-              </h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Students with recorded absences this term
-              </p>
-            </div>
-            <div className="divide-y divide-border/60">
-              {absenceReports.map((report, i) => (
-                <motion.div
-                  key={report.studentId}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.04 * i, type: "tween" }}
-                  className="flex items-center gap-4 px-6 py-4 table-row-hover stagger-item"
-                  data-ocid={`attendance.absence.item.${i + 1}`}
-                >
-                  <div
-                    className={`w-10 h-10 rounded-xl ${avatarColors[i % avatarColors.length]} flex items-center justify-center text-sm font-bold flex-shrink-0`}
-                  >
-                    {getInitials(report.name)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-foreground truncate">
-                      {report.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Class {report.class} · Last absent: {report.lastAbsent}
-                    </p>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={`text-xs font-bold flex-shrink-0 ${
-                      report.totalAbsences >= 5
-                        ? "bg-red-50 text-red-700 border-red-200"
-                        : "bg-amber-50 text-amber-700 border-amber-200"
-                    }`}
-                  >
-                    {report.totalAbsences} absences
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-xs gap-1.5 shrink-0 rounded-xl hover:border-primary/40 hover:text-primary transition-fast"
-                    onClick={() =>
-                      toast.success(`Alert sent to parent of ${report.name}`)
-                    }
-                    data-ocid={`attendance.alert_parent.${i + 1}.button`}
-                  >
-                    <Bell className="w-3.5 h-3.5" /> Alert Parent
-                  </Button>
-                </motion.div>
-              ))}
             </div>
           </div>
         </TabsContent>

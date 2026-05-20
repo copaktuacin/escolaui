@@ -1,6 +1,5 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -27,7 +26,9 @@ import {
   Menu,
   Monitor,
   Search,
+  Settings2,
   Trophy,
+  UserCheck,
   UserCog,
   UserRound,
   Users,
@@ -41,15 +42,6 @@ import { RATE_LIMIT_EVENT, changePassword } from "../lib/api";
 import { isDemoMode } from "../lib/demoMode";
 import { platformAdminNotifications } from "../lib/mockData";
 import { roleLabels, roleNavPaths } from "../lib/rolePermissions";
-
-const DEMO_ADMIN_TENANT_MAP: Record<string, string> = {
-  "admin@escolamodel.edu.ng": "demo-escola",
-  "admin@cityacademy.edu": "demo-city-academy",
-  "contact@sunriseintl.edu": "demo-sunrise",
-  "hello@greenfieldhs.edu": "demo-greenfield",
-  "info@riversideacademy.edu": "demo-riverside",
-  "principal@escola.com": "demo-escola",
-};
 
 type NavItem = {
   label: string;
@@ -75,7 +67,13 @@ const navGroups: NavGroup[] = [
     label: "Academic",
     items: [
       { label: "Admissions", path: "/admissions", icon: ClipboardList },
+      { label: "Class Teachers", path: "/class-teachers", icon: UserCheck },
       { label: "Attendance", path: "/attendance", icon: CalendarCheck },
+      {
+        label: "Subject Allotment",
+        path: "/subject-allotment",
+        icon: BookOpen,
+      },
       { label: "Online Classes", path: "/online-classes", icon: Monitor },
       { label: "Timetable", path: "/schedule", icon: Calendar },
       { label: "Exams", path: "/exams", icon: Trophy },
@@ -98,7 +96,112 @@ const navGroups: NavGroup[] = [
       { label: "Principal Panel", path: "/principal", icon: Crown },
     ],
   },
+  {
+    label: "Setup",
+    items: [{ label: "School Setup", path: "/setup", icon: Settings2 }],
+  },
 ];
+
+// ─── School Branding Block (top-right corner, above menu) ─────────────────────
+// Fetched from SchoolProfileContext — never shows hardcoded text
+function SchoolBrandingBlock({
+  profile,
+  isLoading,
+}: {
+  profile: {
+    schoolName?: string;
+    logoUrl?: string;
+    logo?: string | null;
+    tagline?: string;
+    motto?: string;
+  };
+  isLoading: boolean;
+}) {
+  const [logoError, setLogoError] = useState(false);
+
+  // Prefer logoUrl (canonical field), fall back to logo
+  const logoSrc = profile.logoUrl || profile.logo || null;
+  const schoolName = profile.schoolName?.trim() || "";
+  const mottoText = profile.motto?.trim() || profile.tagline?.trim() || "";
+
+  const showLogo = !!logoSrc && !logoError;
+
+  // Only hide when loading is DONE and there is genuinely nothing to show
+  if (!isLoading && !schoolName && !logoSrc) return null;
+
+  // While loading: show a skeleton placeholder so the block is always visible
+  if (isLoading) {
+    return (
+      <div
+        className="hidden lg:flex items-center gap-2.5 px-3 py-2 rounded-xl flex-shrink-0"
+        style={{
+          background: "var(--color-muted)",
+          border: "1px solid var(--color-border)",
+          maxWidth: 260,
+        }}
+        data-ocid="topbar.school_branding"
+      >
+        {/* Skeleton logo circle */}
+        <div
+          className="flex-shrink-0 rounded-lg animate-pulse"
+          style={{ width: 34, height: 34, background: "var(--color-border)" }}
+        />
+        <div className="flex flex-col gap-1.5 min-w-0">
+          {/* Skeleton school name bar */}
+          <div
+            className="h-3 w-28 rounded animate-pulse"
+            style={{ background: "var(--color-border)" }}
+          />
+          {/* Skeleton motto bar */}
+          <div
+            className="h-2 w-20 rounded animate-pulse"
+            style={{ background: "var(--color-border)", opacity: 0.6 }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="hidden lg:flex items-center gap-2.5 px-3 py-2 rounded-xl flex-shrink-0"
+      style={{
+        background: "var(--color-muted)",
+        border: "1px solid var(--color-border)",
+        maxWidth: 260,
+      }}
+      data-ocid="topbar.school_branding"
+    >
+      {showLogo && (
+        <img
+          src={logoSrc!}
+          alt={schoolName || "School logo"}
+          className="flex-shrink-0 rounded-lg object-contain"
+          style={{ width: 34, height: 34 }}
+          onError={() => setLogoError(true)}
+        />
+      )}
+      <div className="flex flex-col min-w-0 overflow-hidden items-end text-right">
+        {schoolName && (
+          <span
+            className="text-xs font-bold leading-tight truncate block max-w-[180px]"
+            style={{ color: "var(--color-foreground)" }}
+          >
+            {schoolName}
+          </span>
+        )}
+        {mottoText && (
+          <span
+            className="text-[10px] leading-tight truncate block mt-0.5 max-w-[180px]"
+            style={{ color: "var(--color-muted-foreground)" }}
+          >
+            {mottoText}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 type RateLimitInfo = {
   limit: string | null;
@@ -110,7 +213,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const { profile } = useSchoolProfile();
+  const { profile, isLoading } = useSchoolProfile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rateLimit, setRateLimit] = useState<RateLimitInfo | null>(null);
@@ -175,15 +278,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const tenantId = user?.email
-    ? (DEMO_ADMIN_TENANT_MAP[user.email] ?? "demo-escola")
-    : "demo-escola";
+  const tenantId = "demo-escola";
 
   const unreadPlatformCount = useMemo(() => {
     if (!user) return 0;
     const notifs = platformAdminNotifications[tenantId] ?? [];
     return notifs.filter((n) => !n.read).length;
-  }, [user, tenantId]);
+  }, [user]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -212,12 +313,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const initials =
-    user?.name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2) ?? "SA";
+  // Display name: prefer username (login name), fall back to display name
+  const displayUsername = user?.username || user?.name || "User";
+
+  const initials = displayUsername
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   const allowedPaths = user?.role ? (roleNavPaths[user.role] ?? []) : [];
   const filteredNavGroups = navGroups
@@ -231,6 +335,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const currentPageLabel =
     location.pathname.split("/")[1]?.replace(/-/g, " ") || "Dashboard";
+
+  // Sidebar logo: prefer school logo from profile, else Escola software logo
+  const sidebarLogoSrc = profile.logoUrl || profile.logo || null;
+  const [sidebarLogoError, setSidebarLogoError] = useState(false);
+  const showSchoolLogoInSidebar = !!sidebarLogoSrc && !sidebarLogoError;
 
   const renderSidebarContent = () => (
     <div
@@ -255,35 +364,41 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         style={{ borderBottom: "1px solid oklch(0.28 0.045 240 / 0.5)" }}
       >
         <div className="flex items-center gap-3 min-w-0">
-          {profile.logo ? (
+          {/* Show school logo if available, else Escola software logo */}
+          {showSchoolLogoInSidebar ? (
             <img
-              src={profile.logo}
-              alt="logo"
+              src={sidebarLogoSrc!}
+              alt={profile.schoolName || "School"}
               className="w-9 h-9 rounded-xl object-cover flex-shrink-0 shadow-card ring-1 ring-white/10"
+              onError={() => setSidebarLogoError(true)}
             />
           ) : (
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-floating ring-1 ring-white/20"
-              style={{
-                background:
-                  "linear-gradient(135deg, var(--color-primary), oklch(0.5 0.18 265))",
-              }}
-            >
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
+            <img
+              src="/assets/escola-logo.png"
+              alt="Escola"
+              className="w-9 h-9 rounded-xl object-contain flex-shrink-0 shadow-floating"
+              style={{ background: "rgba(255,255,255,0.08)", padding: "2px" }}
+            />
           )}
 
           {!sidebarCollapsed && (
             <div className="flex-1 min-w-0 overflow-hidden">
-              <span className="text-sm font-bold text-white tracking-tight truncate font-display block">
-                {profile.schoolName}
-              </span>
-              {profile.tagline && (
+              {isLoading && !profile.schoolName ? (
+                <div
+                  className="h-4 w-28 rounded animate-pulse"
+                  style={{ background: "oklch(0.28 0.04 240)" }}
+                />
+              ) : profile.schoolName ? (
+                <span className="text-sm font-bold text-white tracking-tight truncate font-display block leading-tight">
+                  {profile.schoolName}
+                </span>
+              ) : null}
+              {!isLoading && (profile.motto || profile.tagline) && (
                 <p
                   className="text-[10px] truncate mt-0.5"
                   style={{ color: "oklch(0.52 0.04 240)" }}
                 >
-                  {profile.tagline}
+                  {profile.motto || profile.tagline}
                 </p>
               )}
               {demoActive && (
@@ -379,7 +494,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         : {}
                     }
                   >
-                    {/* Pulse dot for active */}
                     {active && (
                       <span
                         className="absolute left-0 top-0 bottom-0 w-0.5 rounded-r-full"
@@ -389,7 +503,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     <item.icon
                       className={`flex-shrink-0 transition-all duration-200 ${
                         sidebarCollapsed ? "w-5 h-5" : "w-4 h-4"
-                      } ${active ? "text-white" : "text-white/35 group-hover:text-white/70"}`}
+                      } ${
+                        active
+                          ? "text-white"
+                          : "text-white/35 group-hover:text-white/70"
+                      }`}
                     />
                     {!sidebarCollapsed && (
                       <span className="truncate overflow-hidden whitespace-nowrap">
@@ -413,7 +531,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         style={{ borderTop: "1px solid oklch(0.27 0.04 240 / 0.5)" }}
       >
         <div
-          className={`flex items-center gap-2.5 ${sidebarCollapsed ? "justify-center" : ""}`}
+          className={`flex items-center gap-2.5 ${
+            sidebarCollapsed ? "justify-center" : ""
+          }`}
         >
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ring-1 ring-white/20 shadow-card"
@@ -427,8 +547,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           {!sidebarCollapsed && (
             <div className="flex-1 min-w-0 overflow-hidden">
+              {/* Always show username from login — never hardcoded name */}
               <p className="text-xs font-semibold text-white/85 truncate leading-none">
-                {user?.name}
+                {displayUsername}
               </p>
               <p
                 className="text-[10px] truncate mt-0.5"
@@ -439,31 +560,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           )}
 
-          {!sidebarCollapsed && (
-            <button
-              type="button"
-              onClick={logout}
-              className="p-1.5 rounded-md transition-colors hover:bg-white/10 flex-shrink-0 focus-ring"
-              style={{ color: "oklch(0.48 0.03 240)" }}
-              aria-label="Log out"
-              data-ocid="sidebar.logout.button"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {sidebarCollapsed && (
-            <button
-              type="button"
-              onClick={logout}
-              className="p-1.5 rounded-md transition-colors hover:bg-white/10 flex-shrink-0"
-              style={{ color: "oklch(0.48 0.03 240)" }}
-              aria-label="Log out"
-              title="Log out"
-              data-ocid="sidebar.logout.button"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={logout}
+            className="p-1.5 rounded-md transition-colors hover:bg-white/10 flex-shrink-0 focus-ring"
+            style={{ color: "oklch(0.48 0.03 240)" }}
+            aria-label="Log out"
+            title="Log out"
+            data-ocid="sidebar.logout.button"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </div>
@@ -551,7 +658,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <span className="text-foreground/80">
                 API rate limit: {rateLimit.remaining} requests remaining. Resets{" "}
                 {rateLimit.reset
-                  ? `at ${new Date(Number.parseInt(rateLimit.reset) * 1000).toLocaleTimeString()}`
+                  ? `at ${new Date(
+                      Number.parseInt(rateLimit.reset) * 1000,
+                    ).toLocaleTimeString()}`
                   : "soon"}
                 .
               </span>
@@ -582,9 +691,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           {/* Breadcrumb — desktop */}
           <div className="hidden lg:flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider max-w-[120px] truncate">
-              {profile.schoolName}
-            </span>
+            {profile.schoolName && (
+              <span className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider max-w-[120px] truncate">
+                {profile.schoolName}
+              </span>
+            )}
             <ChevronRight className="w-3 h-3 text-muted-foreground/30" />
             <span className="text-sm font-semibold text-foreground capitalize">
               {currentPageLabel}
@@ -609,7 +720,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-1">
+          {/* School branding — right side above user menu, from API only */}
+          <SchoolBrandingBlock profile={profile} isLoading={isLoading} />
+
+          <div className="flex items-center gap-1 flex-shrink-0">
             {/* Notifications */}
             <motion.button
               type="button"
@@ -617,10 +731,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               whileTap={{ scale: 0.95 }}
               className="relative p-2 rounded-lg hover:bg-accent transition-colors"
               onClick={() => navigate({ to: "/notifications" })}
-              aria-label={`Notifications${unreadPlatformCount > 0 ? ` — ${unreadPlatformCount} unread` : ""}`}
+              aria-label={`Notifications${
+                unreadPlatformCount > 0
+                  ? ` — ${unreadPlatformCount} unread`
+                  : ""
+              }`}
               data-ocid="topbar.notifications.button"
             >
-              <Bell className="w-4.5 h-4.5 w-[18px] h-[18px] text-muted-foreground" />
+              <Bell className="w-[18px] h-[18px] text-muted-foreground" />
               {unreadPlatformCount > 0 && (
                 <motion.span
                   initial={{ scale: 0 }}
@@ -655,8 +773,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </AvatarFallback>
                 </Avatar>
                 <div className="hidden sm:block text-left leading-none">
+                  {/* Show login username — never a hardcoded name */}
                   <p className="text-sm font-semibold text-foreground leading-none truncate max-w-[120px]">
-                    {user?.name?.split(" ").slice(0, 2).join(" ") ?? "User"}
+                    {displayUsername}
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5 capitalize">
                     {roleLabel}
@@ -677,11 +796,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   <div className="px-4 py-3 border-b border-border/60">
                     <p className="text-sm font-semibold text-foreground truncate">
-                      {user?.name}
+                      {displayUsername}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                      {user?.email}
-                    </p>
+                    {user?.email && (
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                        {user.email}
+                      </p>
+                    )}
                     <Badge
                       variant="outline"
                       className="mt-1.5 text-[10px] px-2 py-0.5 font-semibold capitalize"
@@ -695,18 +816,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     </Badge>
                   </div>
                   <div className="p-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUserMenuOpen(false);
-                        navigate({ to: "/profile" });
-                      }}
+                    {/* My Profile — use plain <a> to guarantee navigation regardless of router state */}
+                    <a
+                      href="/profile"
+                      onClick={() => setUserMenuOpen(false)}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-accent rounded-lg transition-colors"
                       data-ocid="topbar.profile.button"
                     >
                       <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
                       My Profile
-                    </button>
+                    </a>
+                    {/* Change Password */}
                     <button
                       type="button"
                       onClick={openChangePwd}
@@ -716,6 +836,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       <KeyRound className="w-3.5 h-3.5 text-muted-foreground" />
                       Change Password
                     </button>
+                    {/* Sign out */}
                     <button
                       type="button"
                       onClick={() => {
@@ -774,9 +895,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center"
-                  style={{
-                    background: "var(--color-primary-light)",
-                  }}
+                  style={{ background: "var(--color-primary-light)" }}
                 >
                   <KeyRound
                     className="w-4 h-4"

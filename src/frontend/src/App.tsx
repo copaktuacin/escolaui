@@ -17,6 +17,7 @@ import AdminPage from "./pages/AdminPage";
 import AdmissionsPage from "./pages/AdmissionsPage";
 import AttendancePage from "./pages/AttendancePage";
 import BulkImportPage from "./pages/BulkImportPage";
+import ClassTeacherPage from "./pages/ClassTeacherPage";
 import DashboardPage from "./pages/DashboardPage";
 import ExamsPage from "./pages/ExamsPage";
 import FeesPage from "./pages/FeesPage";
@@ -39,7 +40,9 @@ import PrincipalPage from "./pages/PrincipalPage";
 import ProfilePage from "./pages/ProfilePage";
 import ReportCardPage from "./pages/ReportCardPage";
 import SchedulePage from "./pages/SchedulePage";
+import SchoolSetupPage from "./pages/SchoolSetupPage";
 import StudentsPage from "./pages/StudentsPage";
+import SubjectAllotmentPage from "./pages/SubjectAllotmentPage";
 import TeacherPage from "./pages/TeacherPage";
 import TeachersPage from "./pages/TeachersPage";
 
@@ -56,12 +59,12 @@ const queryClient = new QueryClient({
 const rootRoute = createRootRoute({
   component: () => (
     <QueryClientProvider client={queryClient}>
-      <SchoolProfileProvider>
-        <AuthProvider>
+      <AuthProvider>
+        <SchoolProfileProvider>
           <Outlet />
           <Toaster richColors position="top-right" />
-        </AuthProvider>
-      </SchoolProfileProvider>
+        </SchoolProfileProvider>
+      </AuthProvider>
     </QueryClientProvider>
   ),
 });
@@ -424,6 +427,7 @@ const reportsRoute = createRoute({
 
 // Profile route — accessible by ALL authenticated users (school + platform admin).
 // Uses PlatformAdminLayout for superadmin, school Layout for everyone else.
+// IMPORTANT: No allowedRoles restriction — any logged-in user can access their profile.
 function ProfileRouteComponent() {
   const { user } = useAuth();
   if (user?.isPlatformAdmin) {
@@ -435,8 +439,11 @@ function ProfileRouteComponent() {
       </ProtectedRoute>
     );
   }
+  // Pass NO allowedRoles — ProtectedRoute only checks isAuthenticated & not isPlatformAdmin.
+  // This means any school-side user (admin, teacher, accountant, clerk, etc.) can access
+  // their profile regardless of their exact role string.
   return (
-    <Protected allowedRoles={SCHOOL_ROLES}>
+    <Protected>
       <ProfilePage />
     </Protected>
   );
@@ -446,6 +453,35 @@ const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/profile",
   component: ProfileRouteComponent,
+});
+
+const schoolSetupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/setup",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <SchoolSetupPage />
+    </Protected>
+  ),
+});
+
+const classTeachersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/class-teachers",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <ClassTeacherPage />
+    </Protected>
+  ),
+});
+const subjectAllotmentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/subject-allotment",
+  component: () => (
+    <Protected allowedRoles={["principal"]}>
+      <SubjectAllotmentPage />
+    </Protected>
+  ),
 });
 
 const routeTree = rootRoute.addChildren([
@@ -483,6 +519,9 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   reportsRoute,
   profileRoute,
+  schoolSetupRoute,
+  classTeachersRoute,
+  subjectAllotmentRoute,
 ]);
 
 const router = createRouter({ routeTree });

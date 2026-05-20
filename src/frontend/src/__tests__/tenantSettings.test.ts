@@ -178,7 +178,10 @@ describe("GET /TenantSettings/admin/tenants — list all tenants", () => {
     });
     const res = await getSuperAdminTenants();
     expect(res.data?.data).toHaveLength(1);
-    expect(res.data?.data[0].tenantId).toBe(1);
+    expect(
+      (res.data?.data[0] as Record<string, unknown>)?.tenantId ??
+        res.data?.data[0].id,
+    ).toBe(1);
     expect(res.data?.data[0].schoolName).toBe("Greenfield Academy");
   });
 });
@@ -196,10 +199,13 @@ describe("POST /TenantSettings/admin/tenants — create new tenant/school", () =
       },
     });
     await createSuperAdminTenant({
-      schoolName: "New School",
-      adminEmail: "admin@newschool.com",
-      adminPassword: "SecurePass123",
-      subscriptionPlan: "Basic",
+      SchoolName: "New School",
+      Email: "admin@newschool.com",
+      PrincipalName: "Principal",
+      PrincipalEmail: "admin@newschool.com",
+      PrincipalPassword: "SecurePass123",
+      SchoolUsername: "newschool",
+      RoleId: 1,
     });
     const [url, opts] = vi.mocked(global.fetch).mock.calls[0] as [
       string,
@@ -213,11 +219,13 @@ describe("POST /TenantSettings/admin/tenants — create new tenant/school", () =
     setToken("superadmin-tok");
     mockFetchOk({ success: true, data: { tenantId: 6 } });
     const payload = {
-      schoolName: "Sunrise Academy",
-      adminEmail: "principal@sunrise.com",
-      adminPassword: "Sunrise@123",
-      subscriptionPlan: "Pro",
-      domain: "sunrise.escola.com",
+      SchoolName: "Sunrise Academy",
+      Email: "principal@sunrise.com",
+      PrincipalName: "Principal",
+      PrincipalEmail: "principal@sunrise.com",
+      PrincipalPassword: "Sunrise@123",
+      SchoolUsername: "sunrise",
+      RoleId: 1 as const,
     };
     await createSuperAdminTenant(payload);
     const [, opts] = vi.mocked(global.fetch).mock.calls[0] as [
@@ -235,10 +243,13 @@ describe("POST /TenantSettings/admin/tenants — create new tenant/school", () =
     setToken("sa-create-tok");
     mockFetchOk({ success: true, data: { tenantId: 7 } });
     await createSuperAdminTenant({
-      schoolName: "X",
-      adminEmail: "x@x.com",
-      adminPassword: "Xpass123",
-      subscriptionPlan: "Basic",
+      SchoolName: "X",
+      Email: "x@x.com",
+      PrincipalName: "Principal",
+      PrincipalEmail: "x@x.com",
+      PrincipalPassword: "Xpass123",
+      SchoolUsername: "x",
+      RoleId: 1,
     });
     const [, opts] = vi.mocked(global.fetch).mock.calls[0] as [
       string,
@@ -283,7 +294,9 @@ describe("GET /TenantSettings/admin/subscriptions — subscription panel", () =>
     });
     const res = await getSuperAdminSubscriptions(1, 50, "Overdue");
     expect(res.data?.data[0].status).toBe("Overdue");
-    expect(res.data?.data[0].amountDue).toBe(50000);
+    expect((res.data?.data[0] as Record<string, unknown>)?.amountDue).toBe(
+      50000,
+    );
   });
 });
 
@@ -357,7 +370,9 @@ describe("GET /TenantSettings/admin/reminders — reminder log", () => {
       },
     });
     const res = await getReminderLog();
-    expect(res.data?.data[0].reminderId).toBe(101);
+    expect((res.data?.data[0] as Record<string, unknown>)?.reminderId).toBe(
+      101,
+    );
     expect(res.data?.data[0].status).toBe("sent");
   });
 });
